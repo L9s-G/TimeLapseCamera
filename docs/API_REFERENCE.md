@@ -5,7 +5,7 @@
 
 ---
 
-## 1. 相机 CameraX (androidx.camera:* 1.3.1)
+## 1. 相机 CameraX (androidx.camera:* 1.4.1)
 
 | API | 用途 | 核查结论 | 文档 |
 |-----|------|---------|------|

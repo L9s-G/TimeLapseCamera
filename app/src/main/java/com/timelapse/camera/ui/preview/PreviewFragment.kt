@@ -39,7 +39,8 @@ import kotlinx.coroutines.withContext
  * 功能：
  * - CameraX Preview 用例实时预览画面
  * - 「立即拍一张」试拍：走与正常拍摄完全相同的管线（CameraXController → 水印 → 存储）
- *   唯一区别：不循环、不等待、文件名带时间戳（yyyy-MM-dd_HHmmss_SSS.jpg）
+ *   唯一区别：不循环、不等待，文件名格式与正式拍摄对齐（yyyyMMdd_HHmmss.jpg），
+ *   试拍额外加毫秒后缀（yyyyMMdd_HHmmss_SSS.jpg）以保证唯一性
  *
  * 功耗设计：
  * - 只在页面可见时绑定预览用例

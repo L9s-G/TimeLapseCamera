@@ -30,7 +30,12 @@ import java.io.File
  *
  * 教学要点：
  * - RecyclerView 的分页加载模式（offset 游标 + 底部监听）
- * - 内存友好：不在内存中保留全部照片，只保留当前可视范围附近的批次
+ * - 内存友好：每次只加载一页（30张），避免一次性加载全部照片；
+ *   注意：adapter.photos 存储的是 File 引用（每条目 ~50 字节），不是 Bitmap；
+ *   实际 Bitmap 由 Coil 按 ImageView 尺寸（120dp）自动采样并管理缓存，
+ *   Coil 内部有 LRU 回收，浏览深度对内存峰值影响有限。
+ *   若要在离开页面时彻底释放 adapter 数据，可在 onDestroyView 中调用 adapter.setPhotos(emptyList())，
+ *   本项目暂不强制，教学重点是理解分页加载模式。
  */
 class GalleryFragment : Fragment() {
 

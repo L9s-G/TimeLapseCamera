@@ -90,13 +90,6 @@
     <!-- 关于 -->
     <string name="settings_version">版本 %1$s</string>
 
-    <!-- 摄像头方向（SettingsFragment Spinner 使用） -->
-    <string name="settings_shot_rotation">拍摄方向</string>
-    <string name="shot_rotation_portrait">竖屏 (0°)</string>
-    <string name="shot_rotation_landscape">横屏 (90°)</string>
-    <string name="shot_rotation_inverted">倒立 (180°)</string>
-    <string name="shot_rotation_landscape_rev">横屏反 (270°)</string>
-
     <!-- 权限拒绝提示（PreviewFragment 使用） -->
     <string name="perm_camera_denied">相机权限被拒绝，无法拍摄</string>
 

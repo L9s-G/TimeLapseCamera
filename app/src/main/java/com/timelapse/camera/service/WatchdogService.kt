@@ -28,7 +28,8 @@ import kotlinx.coroutines.launch
  * 独立进程的守护服务，用于在主服务被杀后自动重启。
  *
  * 设计原理：
- * - 运行在 :watchdog 进程，与主服务完全隔离
+ * - 运行在 :watchdog 进程，与主服务完全隔离（通过 AndroidManifest.xml 中
+ *   [WatchdogService] 的 android:process=":watchdog" 声明实现）
  * - 每 60s 检查一次主服务进程是否存活
  * - 不存活时立即重新注册拍摄闹钟以触发服务重启
  * - 持有 WakeLock 防止息屏时守护进程本身被杀（实测国产 OS 深度睡眠后
