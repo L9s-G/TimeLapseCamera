@@ -188,8 +188,6 @@ class PreviewFragment : Fragment() {
                 LogBuffer.log("I", TAG, "试拍开始，释放预览")
                 CameraMutex.withLock { cameraProvider?.unbindAll() }
 
-                val timestamp = System.currentTimeMillis()
-
                 // ── 2. 拍摄（主线程，CameraX 操作必须在主线程）──
                 val camera = CameraXController(
                     requireContext(),
@@ -231,7 +229,7 @@ class PreviewFragment : Fragment() {
                 b.ivTestResult.load(savedPath)
                 // recycle 放在 load() 之后：Bitmap 已 compress 写入磁盘，
                 // Coil 从文件路径加载，bitmap 对象此时可安全回收。
-                watermarkedBitmap?.recycle()
+                watermarkedBitmap.recycle()
 
                 b.tvTestResult.text = if (result is CaptureResult.Success) {
                     getString(R.string.preview_test_saved)

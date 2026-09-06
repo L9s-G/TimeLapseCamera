@@ -143,7 +143,7 @@ class CameraXController(
                     .build()
 
                 provider.unbindAll()
-                val camera = provider.bindToLifecycle(lifecycleOwner!!, cameraSelector, capture)
+                provider.bindToLifecycle(lifecycleOwner!!, cameraSelector, capture)
 
                 // 5. 冷启动等待：摄像头刚绑定后传感器/ISP 需要几毫秒稳定，
                 //    不加此延时在部分低端机上会出现首张黑屏或模糊。
