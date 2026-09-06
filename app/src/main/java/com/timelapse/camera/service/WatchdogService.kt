@@ -56,13 +56,13 @@ class WatchdogService : Service() {
         // 独立进程：LogBuffer 需在本进程内重新初始化，否则守护日志全部静默丢失
         runCatching {
             val config = CaptureConfig.load(applicationContext)
-            LogBuffer.init(PhotoStorageFactory.create(applicationContext, config).getPhotoDir())
+            LogBuffer.init(PhotoStorageFactory.create(applicationContext, config).getPhotoDir(), LogBuffer.ID_WATCHDOG)
         }
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
         acquireWakeLock()
         startCheckLoop()
-        LogBuffer.log("I", TAG, "守护服务启动")
+        LogBuffer.log(LogBuffer.ID_WATCHDOG, "I", TAG, "守护服务启动")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -84,22 +84,21 @@ class WatchdogService : Service() {
                     val config = CaptureConfig.load(this@WatchdogService)
                     if (config.isRunning) {
                         idleRounds = 0
-                        LogBuffer.log("W", TAG, "主服务进程未运行，Watchdog 触发重启闹钟")
+                        LogBuffer.log(LogBuffer.ID_WATCHDOG, "W", TAG, "主服务进程未运行，Watchdog 触发重启闹钟")
                         // 设一个 5 秒后的闹钟，触发 CaptureReceiver → 重启主服务
                         CaptureScheduler.get(this@WatchdogService).scheduleNext(5)
                     } else {
                         // 用户已停止拍摄：连续 N 轮仍为 false 则自行退出，避免常驻耗电
                         idleRounds++
-                        LogBuffer.log("I", TAG, "主服务未运行，isRunning=false（$idleRounds/$IDLE_EXIT_ROUNDS）")
+
                         if (idleRounds >= IDLE_EXIT_ROUNDS) {
-                            LogBuffer.log("I", TAG, "连续 $IDLE_EXIT_ROUNDS 轮无拍摄任务，守护服务自行退出")
+                            LogBuffer.log(LogBuffer.ID_WATCHDOG, "I", TAG, "连续 $IDLE_EXIT_ROUNDS 轮无拍摄任务，守护服务自行退出")
                             stopSelf()
                             break
                         }
                     }
                 } else {
                     idleRounds = 0
-                    LogBuffer.log("I", TAG, "主服务运行正常")
                 }
             }
         }
@@ -156,9 +155,9 @@ class WatchdogService : Service() {
         val config = CaptureConfig.load(applicationContext)
         if (config.isRunning) {
             CaptureScheduler.get(this).scheduleNext(60)
-            LogBuffer.log("I", TAG, "检测拍摄中，注册闹钟60秒后自我唤醒")
+            LogBuffer.log(LogBuffer.ID_WATCHDOG, "I", TAG, "检测拍摄中，注册闹钟60秒后自我唤醒")
         } else {
-            LogBuffer.log("I", TAG, "已停止拍摄，不恢复守护")
+            LogBuffer.log(LogBuffer.ID_WATCHDOG, "I", TAG, "已停止拍摄，不恢复守护")
         }
         releaseWakeLock()
         serviceScope.cancel()

@@ -55,16 +55,13 @@ object WatermarkPipeline {
             when (result) {
                 is CaptureResult.Success -> {
                     if (hasWatermark) {
-                        LogBuffer.log("I", TAG, "开始水印处理")
                         val options = buildWatermarkOptions(config, storage, context)
                         watermarkProcessor.apply(result.bitmap, result.timestamp, options)
                     } else {
-                        LogBuffer.log("I", TAG, "水印全关，跳过处理")
                         result.bitmap
                     }
                 }
                 is CaptureResult.Failure -> {
-                    LogBuffer.log("E", TAG, "拍摄失败: ${result.message}")
                     watermarkProcessor.createErrorBitmap(System.currentTimeMillis())
                 }
             }
@@ -84,6 +81,4 @@ object WatermarkPipeline {
         storageRemainingGb = BatteryMonitor.getStorageRemainingGb(storage.getPhotoDir()),
         temperatureCelsius = BatteryMonitor.getBatteryTemperature(context)
     )
-
-    private const val TAG = "WatermarkPipeline"
 }

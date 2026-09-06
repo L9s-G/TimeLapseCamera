@@ -90,14 +90,14 @@ class CaptureService : Service() {
     override fun onCreate() {
         super.onCreate()
         storage = PhotoStorageFactory.create(applicationContext, CaptureConfig.load(applicationContext))
-        LogBuffer.init(storage.getPhotoDir())
+        LogBuffer.init(storage.getPhotoDir(), LogBuffer.ID_MAIN)
         createNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
-                LogBuffer.log("I", TAG, "收到停止指令")
+                LogBuffer.log(LogBuffer.ID_MAIN, "I", TAG, "收到停止指令")
                 // 注意：isRunning 已由 UI 层写入，此处不再修改
                 CaptureScheduler.get(applicationContext).cancel()
                 captureJob?.cancel()
@@ -111,7 +111,7 @@ class CaptureService : Service() {
                 val config = CaptureConfig.load(applicationContext)
                 // isRunning=false 表示用户已停止，主动清理并退出
                 if (!config.isRunning) {
-                    LogBuffer.log("I", TAG, "检测到 isRunning=false，主动停止并清理")
+                    LogBuffer.log(LogBuffer.ID_MAIN, "I", TAG, "检测到 isRunning=false，主动停止并清理")
                     CaptureScheduler.get(applicationContext).cancel()
                     stopService(Intent(applicationContext, WatchdogService::class.java))
                     stopSelf()
@@ -119,7 +119,7 @@ class CaptureService : Service() {
                 }
                 // 区分启动来源：lastCaptureTime==0 说明是闹钟/Watchdog 唤醒后的重启，否则是正常启动
                 val restartSource = if (config.lastCaptureTime == 0L) "闹钟重启" else "正常启动"
-                LogBuffer.log("I", TAG, "服务启动 [来源=$restartSource]，间隔 ${config.intervalSeconds}s")
+                LogBuffer.log(LogBuffer.ID_MAIN, "I", TAG, "服务启动 [来源=$restartSource]，间隔 ${config.intervalSeconds}s")
                 val initialDelay = if (config.lastRemoteInterval > 0)
                     config.lastRemoteInterval else config.intervalSeconds
                 // Android 12+ 后台启动前台服务 / Android 14 camera type 缺 CAMERA 权限时
@@ -127,19 +127,19 @@ class CaptureService : Service() {
                 try {
                     startForeground(NOTIFICATION_ID, buildNotification(initialDelay))
                 } catch (e: Exception) {
-                    LogBuffer.log("E", TAG, "启动前台服务失败: ${e.javaClass.simpleName}: ${e.message}")
+                    LogBuffer.log(LogBuffer.ID_MAIN, "E", TAG, "启动前台服务失败: ${e.javaClass.simpleName}: ${e.message}")
                     stopSelf()
                     return START_NOT_STICKY
                 }
 
                 // 【互相守护】检查并恢复 Watchdog，确保保护链完整
                 if (!isWatchdogRunning()) {
-                    LogBuffer.log("I", TAG, "Watchdog 未运行，恢复守护")
+                    LogBuffer.log(LogBuffer.ID_MAIN, "I", TAG, "Watchdog 未运行，恢复守护")
                     startService(Intent(this, WatchdogService::class.java))
                 }
 
                 if (captureJob == null || !captureJob!!.isActive) {
-                    LogBuffer.log("I", TAG, "拍摄服务启动，间隔 ${config.intervalSeconds}s")
+
                     // 开机保活：持有 WakeLock 贯穿整个服务运行期（无超时），防止国产 OS 息屏深度睡眠后
                     // CPU 无法唤醒导致拍摄时序失控（实测教训，见类头注释）
                     acquireWakeLock()
@@ -167,7 +167,7 @@ class CaptureService : Service() {
             while (true) {
               try {
                 var config = CaptureConfig.load(applicationContext)
-                LogBuffer.log("I", TAG, "循环开始, isRunning=${config.isRunning}")
+
                 if (!config.isRunning) break
 
                 // ── 0. 检测存储位置是否变更，变更则重建 storage 实例 ──
@@ -185,7 +185,7 @@ class CaptureService : Service() {
                     val remoteDelay = remoteConfigFetcher.fetchNextInterval(config.remoteConfigUrl!!)
                     if (remoteDelay != null) {
                         nextDelay = remoteDelay
-                        LogBuffer.log("I", TAG, "远程配置: 间隔=${remoteDelay}s")
+                        LogBuffer.log(LogBuffer.ID_MAIN, "I", TAG, "远程配置: 间隔=${remoteDelay}s")
                         // 局部更新：只写远程间隔的 key，避免全量 save 覆盖用户刚改的其他配置
                         CaptureConfig.updateRemoteInterval(applicationContext, remoteDelay)
                         config = config.copy(lastRemoteInterval = remoteDelay)
@@ -198,18 +198,18 @@ class CaptureService : Service() {
                 // WakeLock 已由服务启动时持有（防止息屏秒睡），此处只需正常拍摄
                 // 拍摄段异常由外层 catch(Throwable) 统一捕获：bitmapToSave 尚未赋值时无需回收
                 val timestamp = System.currentTimeMillis()
-                LogBuffer.log("I", TAG, "开始拍摄 #${config.captureCount + 1}")
+
                 val camera: ICameraController = CameraXController(
                     applicationContext,
                     config.cameraId,
                     config.shotRotation
                 )
                 val result = camera.capture()
-                LogBuffer.log("I", TAG, "拍摄结果: ${if (result is CaptureResult.Success) "成功" else "失败: ${(result as CaptureResult.Failure).message}"}")
+
 
                 // 拍摄成功：加水印 + 存盘；拍摄失败：生成黑图占位 + 存盘
                 // 统一调用 WatermarkPipeline 处理水印逻辑，确保两条路径行为一致
-                LogBuffer.log("I", TAG, "开始水印处理")
+
                 val watermarkedBitmap = WatermarkPipeline.process(
                     config = config,
                     storage = storage,
@@ -230,12 +230,12 @@ class CaptureService : Service() {
                             val newCount = config.captureCount + 1
                             CaptureConfig.updateCaptureProgress(applicationContext, newCount, timestamp)
                             config = config.copy(captureCount = newCount, lastCaptureTime = timestamp)
-                            LogBuffer.log("I", TAG, "拍摄完成 #$newCount")
+                            LogBuffer.log(LogBuffer.ID_MAIN, "I", TAG, "拍摄完成 #$newCount")
                         } else {
-                            LogBuffer.log("W", TAG, "拍摄失败，已保存黑图占位")
+                            LogBuffer.log(LogBuffer.ID_MAIN, "W", TAG, "拍摄失败，已保存黑图占位")
                         }
                     }.onFailure { e ->
-                        LogBuffer.log("E", TAG, "写入磁盘失败: ${e.message}")
+                        LogBuffer.log(LogBuffer.ID_MAIN, "E", TAG, "写入磁盘失败: ${e.message}")
                     }
                 } finally {
                     watermarkedBitmap?.recycle()
@@ -252,7 +252,7 @@ class CaptureService : Service() {
               } catch (e: CancellationException) {
                   throw e
               } catch (e: Throwable) {
-                  LogBuffer.log("E", TAG, "拍摄循环异常: ${e.javaClass.simpleName}: ${e.message}")
+                  LogBuffer.log(LogBuffer.ID_MAIN, "E", TAG, "拍摄循环异常: ${e.javaClass.simpleName}: ${e.message}")
                   delay(5000)
               }
             }
@@ -348,7 +348,7 @@ class CaptureService : Service() {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             nm.notify(NOTIFICATION_ID, buildNotification(nextDelaySeconds))
         } catch (e: Exception) {
-            LogBuffer.log("E", TAG, "更新通知失败: ${e.message}")
+            LogBuffer.log(LogBuffer.ID_MAIN, "E", TAG, "更新通知失败: ${e.message}")
         }
     }
 

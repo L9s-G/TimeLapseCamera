@@ -68,14 +68,14 @@ class CameraXController(
     private var lifecycleOwner: LifecycleOwner? = null
 
     override suspend fun capture(): CaptureResult = CameraMutex.withLock {
-        LogBuffer.log("I", TAG, "开始拍摄, cameraId=$cameraId")
+
         val result = captureWithCameraId(cameraId)
         if (result is CaptureResult.Success) return@withLock result
 
         // 失败了尝试同方向其他摄像头作为备用
         val fallbackId = findFallbackCameraId(cameraId)
         if (fallbackId != null) {
-            LogBuffer.log("W", TAG, "主镜头失败，切换备用镜头 cameraId=$fallbackId")
+            LogBuffer.log(LogBuffer.ID_MAIN, "W", TAG, "主镜头失败，切换备用镜头 cameraId=$fallbackId")
             val fallbackResult = captureWithCameraId(fallbackId)
             if (fallbackResult is CaptureResult.Success) return@withLock fallbackResult
 
@@ -156,7 +156,7 @@ class CameraXController(
 
             CaptureResult.Success(bitmap, System.currentTimeMillis())
         } catch (e: Throwable) {
-            LogBuffer.log("E", TAG, "拍摄失败: ${e.javaClass.simpleName}: ${e.message}")
+            LogBuffer.log(LogBuffer.ID_MAIN, "E", TAG, "拍摄失败: ${e.javaClass.simpleName}: ${e.message}")
             CaptureResult.Failure("拍摄失败: ${e.message}", e as? Exception ?: RuntimeException(e))
         } finally {
             withContext(Dispatchers.Main) { release() }
@@ -176,12 +176,11 @@ class CameraXController(
      */
     private suspend fun takePictureAndDecode(): Bitmap {
         val bytes = suspendCancellableCoroutine { cont ->
-            LogBuffer.log("I", TAG, "takePicture 调用")
             imageCapture?.takePicture(
                 ContextCompat.getMainExecutor(context),
                 object : ImageCapture.OnImageCapturedCallback() {
                     override fun onCaptureSuccess(image: ImageProxy) {
-                        LogBuffer.log("I", TAG, "onCaptureSuccess 回调")
+
                         // 主线程只做字节拷贝，解码放 IO 线程
                         val buffer = image.planes[0].buffer
                         val data = ByteArray(buffer.remaining())
@@ -191,12 +190,12 @@ class CameraXController(
                     }
 
                     override fun onError(exception: ImageCaptureException) {
-                        LogBuffer.log("E", TAG, "onError 回调: ${exception.message}")
+                        LogBuffer.log(LogBuffer.ID_MAIN, "E", TAG, "onError 回调: ${exception.message}")
                         if (cont.isActive) cont.cancel(exception)
                     }
                 }
             ) ?: run {
-                LogBuffer.log("E", TAG, "imageCapture 为 null，无法拍照")
+                LogBuffer.log(LogBuffer.ID_MAIN, "E", TAG, "imageCapture 为 null，无法拍照")
                 cont.cancel(IllegalStateException("imageCapture 未初始化"))
             }
         }
@@ -239,7 +238,7 @@ class CameraXController(
                 Size(4032, 3024)
             }
         }.getOrElse {
-            LogBuffer.log("W", TAG, "getMaxJpegSize 失败: ${it.message}，使用兜底分辨率 4032x3024")
+            LogBuffer.log(LogBuffer.ID_MAIN, "W", TAG, "getMaxJpegSize 失败: ${it.message}，使用兜底分辨率 4032x3024")
             Size(4032, 3024)
         }
     }

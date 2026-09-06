@@ -92,7 +92,7 @@ interface IPhotoStorage {
         var deleted = 0
         val monthFolders = photoDir.listFiles()?.filter { it.isDirectory }
             ?.sortedBy { it.name } ?: run {
-            LogBuffer.log("W", "Storage", "无照片文件夹可清理")
+            LogBuffer.log(LogBuffer.ID_MAIN, "W", "Storage", "无照片文件夹可清理")
             return 0
         }
 
@@ -113,7 +113,7 @@ interface IPhotoStorage {
                 if (file.delete()) {
                     deleted++
                 } else {
-                    LogBuffer.log("W", "Storage", "删除失败: ${file.name}")
+                    LogBuffer.log(LogBuffer.ID_MAIN, "W", "Storage", "删除失败: ${file.name}")
                 }
             }
 
@@ -123,15 +123,15 @@ interface IPhotoStorage {
         }
 
         if (deleted > 0) {
-            LogBuffer.log("I", "Storage", "FIFO 清理: 删除 $deleted 个文件, 剩余 ${BatteryMonitor.getStorageRemainingGb(photoDir)}GB")
+            LogBuffer.log(LogBuffer.ID_MAIN, "I", "Storage", "FIFO 清理: 删除 $deleted 个文件, 剩余 ${BatteryMonitor.getStorageRemainingGb(photoDir)}GB")
             if (BatteryMonitor.getStorageRemainingGb(photoDir) < safeLineGb && deleted >= maxDeleteCount) {
-                LogBuffer.log("W", "Storage", "本轮清理未完成，下轮继续")
+                LogBuffer.log(LogBuffer.ID_MAIN, "W", "Storage", "本轮清理未完成，下轮继续")
             }
             // 删除了文件，通知实现失效列表缓存（相册页可能正在分页浏览）
             invalidateListCache()
         }
         if (deleted == 0 && remaining < thresholdGb) {
-            LogBuffer.log("W", "Storage", "存储不足但无可删文件")
+            LogBuffer.log(LogBuffer.ID_MAIN, "W", "Storage", "存储不足但无可删文件")
         }
         return deleted
     }

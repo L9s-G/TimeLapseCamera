@@ -65,7 +65,7 @@ class StatusFragment : Fragment() {
         super.onCreate(savedInstanceState)
         config = CaptureConfig.load(requireContext())
         storage = PhotoStorageFactory.create(requireContext(), config)
-        LogBuffer.init(storage.getPhotoDir())
+        LogBuffer.init(storage.getPhotoDir(), LogBuffer.ID_MAIN)
     }
 
     override fun onCreateView(
@@ -122,7 +122,7 @@ class StatusFragment : Fragment() {
                         battery = BatteryMonitor.getBatteryPercent(requireContext()),
                         storageGb = BatteryMonitor.getStorageRemainingGb(curStorage.getPhotoDir()),
                         temp = BatteryMonitor.getBatteryTemperature(requireContext()),
-                        logs = LogBuffer.getFormattedLogs()
+                        logs = LogBuffer.getFormattedLogs(LogBuffer.ID_MAIN)
                     )
                 }
                 val b = _binding ?: return@launch
@@ -204,7 +204,7 @@ class StatusFragment : Fragment() {
         binding.tvTemperature.text = getString(R.string.status_temperature_format, temp)
 
         // 日志
-        binding.tvLog.text = LogBuffer.getFormattedLogs()
+        binding.tvLog.text = LogBuffer.getFormattedLogs(LogBuffer.ID_MAIN)
             .ifEmpty { getString(R.string.status_log_empty) }
     }
 

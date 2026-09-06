@@ -7,7 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
-import android.util.Log
+import com.timelapse.camera.util.LogBuffer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -113,7 +113,7 @@ class DcimPhotoStorage(private val context: Context) : IPhotoStorage {
         } catch (e: Exception) {
             // 写入失败：删除孤儿记录，避免 IS_PENDING=1 的空条目遗留在相册（Android 10+ 保留至多 7 天）
             runCatching { context.contentResolver.delete(uri, null, null) }
-                .onFailure { Log.w(TAG, "孤儿记录清理失败: ${it.message}") }
+                .onFailure { LogBuffer.log(LogBuffer.ID_MAIN, "W", TAG, "孤儿记录清理失败: ${it.message}") }
             throw e
         }
         // bitmap 由 CaptureService 统一 recycle，此处不回收
@@ -124,7 +124,7 @@ class DcimPhotoStorage(private val context: Context) : IPhotoStorage {
         runCatching {
             context.contentResolver.update(uri, values, null, null)
         }.onFailure { e ->
-            Log.w(TAG, "IS_PENDING 更新失败（相册可能延迟显示）: ${e.message}")
+            LogBuffer.log(LogBuffer.ID_MAIN, "W", TAG, "IS_PENDING 更新失败（相册可能延迟显示）: ${e.message}")
         }
 
         // 返回路径：优先取 DATA 列，失败则返回 Uri 字符串（调用方只需识别是成功路径）
@@ -155,7 +155,7 @@ class DcimPhotoStorage(private val context: Context) : IPhotoStorage {
         } catch (e: Exception) {
             // 写入失败：删除孤儿记录，避免 IS_PENDING=1 的空条目遗留在相册
             runCatching { context.contentResolver.delete(uri, null, null) }
-                .onFailure { Log.w(TAG, "孤儿记录清理失败（试拍）: ${it.message}") }
+                .onFailure { LogBuffer.log(LogBuffer.ID_MAIN, "W", TAG, "孤儿记录清理失败（试拍）: ${it.message}") }
             throw e
         }
         // bitmap 由 CaptureService 统一 recycle
@@ -165,7 +165,7 @@ class DcimPhotoStorage(private val context: Context) : IPhotoStorage {
         runCatching {
             context.contentResolver.update(uri, values, null, null)
         }.onFailure { e ->
-            Log.w(TAG, "IS_PENDING 更新失败（试拍）: ${e.message}")
+            LogBuffer.log(LogBuffer.ID_MAIN, "W", TAG, "IS_PENDING 更新失败（试拍）: ${e.message}")
         }
 
         return getFilePathFromUri(uri) ?: uri.toString()
