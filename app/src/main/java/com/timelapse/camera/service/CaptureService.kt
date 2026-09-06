@@ -22,10 +22,8 @@ import com.timelapse.camera.model.CaptureResult
 import com.timelapse.camera.scheduler.CaptureScheduler
 import com.timelapse.camera.storage.IPhotoStorage
 import com.timelapse.camera.storage.PhotoStorageFactory
-import com.timelapse.camera.util.BatteryMonitor
 import com.timelapse.camera.util.LogBuffer
-import com.timelapse.camera.watermark.WatermarkOptions
-import com.timelapse.camera.watermark.WatermarkProcessor
+import com.timelapse.camera.util.WatermarkPipeline
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -202,36 +200,21 @@ class CaptureService : Service() {
                 LogBuffer.log("I", TAG, "拍摄结果: ${if (result is CaptureResult.Success) "成功" else "失败: ${(result as CaptureResult.Failure).message}"}")
 
                 // 拍摄成功：加水印 + 存盘；拍摄失败：生成黑图占位 + 存盘
-                // 优化：所有水印内容全关时直接跳过水印，零额外内存
-                val hasWatermark = !config.watermarkText.isNullOrBlank() ||
-                        config.watermarkShowBattery ||
-                        config.watermarkShowStorage ||
-                        config.watermarkShowTemperature
-
-                // when 对 CaptureResult（密封类）穷尽匹配，两分支均产出非 null Bitmap
-                val bitmapToSave: Bitmap = when (result) {
-                    is CaptureResult.Success -> {
-                        if (hasWatermark) {
-                            LogBuffer.log("I", TAG, "开始水印处理")
-                            val watermarkOptions = buildWatermarkOptions(config)
-                            watermarkProcessor.apply(result.bitmap, result.timestamp, watermarkOptions)
-                        } else {
-                            LogBuffer.log("I", TAG, "水印全关，跳过水印处理")
-                            result.bitmap
-                        }
-                    }
-                    is CaptureResult.Failure -> {
-                        LogBuffer.log("E", TAG, "拍摄失败: ${result.message}")
-                        watermarkProcessor.createErrorBitmap(timestamp)
-                    }
-                }
+                // 统一调用 WatermarkPipeline 处理水印逻辑，确保两条路径行为一致
+                LogBuffer.log("I", TAG, "开始水印处理")
+                val watermarkedBitmap = WatermarkPipeline.process(
+                    config = config,
+                    storage = storage,
+                    context = applicationContext,
+                    result = result
+                )
 
                 // 写入磁盘也可能失败（磁盘满、IO 错误等）
                 // 失败了就打 Log，不崩溃，等下一轮继续（释放资源是关键）
                 // Bitmap 生命周期闭环：无论存盘成功与否，统一回收，杜绝泄漏
                 try {
                     runCatching {
-                        storage.save(bitmapToSave, timestamp)
+                        watermarkedBitmap?.let { storage.save(it, timestamp) }
                     }.onSuccess {
                         if (result is CaptureResult.Success) {
                             // 局部更新：只写拍摄进度的 key，避免全量 save 覆盖用户刚改的其他配置。
@@ -247,7 +230,7 @@ class CaptureService : Service() {
                         LogBuffer.log("E", TAG, "写入磁盘失败: ${e.message}")
                     }
                 } finally {
-                    bitmapToSave.recycle()
+                    watermarkedBitmap?.recycle()
                 }
 
                 // ── 3. 更新倒计时通知（系统自动渲染，零功耗）──
@@ -273,20 +256,7 @@ class CaptureService : Service() {
         }
     }
 
-    /**
-     * 从配置和系统状态构建 WatermarkOptions。
-     * 电量/存储/温度都是拍摄瞬间读取的，反映真实状态。
-     */
-    private fun buildWatermarkOptions(config: CaptureConfig): WatermarkOptions =
-        WatermarkOptions(
-            customText = config.watermarkText,
-            showBattery = config.watermarkShowBattery,
-            showStorage = config.watermarkShowStorage,
-            showTemperature = config.watermarkShowTemperature,
-            batteryPercent = BatteryMonitor.getBatteryPercent(applicationContext),
-            storageRemainingGb = BatteryMonitor.getStorageRemainingGb(storage.getPhotoDir()),
-            temperatureCelsius = BatteryMonitor.getBatteryTemperature(applicationContext)
-        )
+
 
     // ────────────────── WakeLock ──────────────────
 

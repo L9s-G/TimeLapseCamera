@@ -25,10 +25,8 @@ import com.timelapse.camera.databinding.FragmentPreviewBinding
 import com.timelapse.camera.model.CaptureResult
 import com.timelapse.camera.storage.IPhotoStorage
 import com.timelapse.camera.storage.PhotoStorageFactory
-import com.timelapse.camera.util.BatteryMonitor
 import com.timelapse.camera.util.LogBuffer
-import com.timelapse.camera.watermark.WatermarkOptions
-import com.timelapse.camera.watermark.WatermarkProcessor
+import com.timelapse.camera.util.WatermarkPipeline
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -58,8 +56,6 @@ class PreviewFragment : Fragment() {
     private lateinit var config: CaptureConfig
     private lateinit var storage: IPhotoStorage
     private var cameraProvider: ProcessCameraProvider? = null
-
-    private val watermarkProcessor = WatermarkProcessor()
 
     private val cameraPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -204,46 +200,25 @@ class PreviewFragment : Fragment() {
                 LogBuffer.log("I", TAG,
                     "拍摄完成: ${if (result is CaptureResult.Success) "成功" else "失败"}")
 
-                // ── 3. 水印 + 保存（IO 线程，避免阻塞 UI）──
-                // 水印内容全关时直接跳过水印，节省内存
-                LogBuffer.log("I", TAG, "开始保存处理")
-                val savedPath = withContext(Dispatchers.IO) {
-                    val hasWatermark = !config.watermarkText.isNullOrBlank() ||
-                            config.watermarkShowBattery ||
-                            config.watermarkShowStorage ||
-                            config.watermarkShowTemperature
+                // ── 3. 水印处理（统一调用 WatermarkPipeline）──
+                LogBuffer.log("I", TAG, "开始水印处理")
+                val watermarkedBitmap = WatermarkPipeline.process(
+                    config = config,
+                    storage = storage,
+                    context = requireContext(),
+                    result = result
+                )
 
-                    val bitmapToSave = when (result) {
-                        is CaptureResult.Success -> {
-                            LogBuffer.log("I", TAG,
-                                "照片尺寸: ${result.bitmap.width}x${result.bitmap.height}")
-                            if (hasWatermark) {
-                                LogBuffer.log("I", TAG, "开始水印处理")
-                                val watermarkOptions = WatermarkOptions(
-                                    customText = config.watermarkText,
-                                    showBattery = config.watermarkShowBattery,
-                                    showStorage = config.watermarkShowStorage,
-                                    showTemperature = config.watermarkShowTemperature,
-                                    batteryPercent = BatteryMonitor.getBatteryPercent(requireContext()),
-                                    storageRemainingGb = BatteryMonitor.getStorageRemainingGb(storage.getPhotoDir()),
-                                    temperatureCelsius = BatteryMonitor.getBatteryTemperature(requireContext())
-                                )
-                                watermarkProcessor.apply(result.bitmap, result.timestamp, watermarkOptions)
-                            } else {
-                                LogBuffer.log("I", TAG, "水印全关，跳过水印")
-                                result.bitmap
-                            }
-                        }
-                        is CaptureResult.Failure -> {
-                            watermarkProcessor.createErrorBitmap(timestamp)
-                        }
-                    }
-
-                    LogBuffer.log("I", TAG, "写入存储")
-                    val path = storage.saveTestPhoto(bitmapToSave)
-                    LogBuffer.log("I", TAG, "保存完成: $path")
-                    path
+                // ── 4. 保存试拍照片 ──
+                LogBuffer.log("I", TAG, "写入存储")
+                val savedPath = watermarkedBitmap?.let {
+                    storage.saveTestPhoto(it)
+                } ?: run {
+                    LogBuffer.log("E", TAG, "水印处理失败，无法保存")
+                    return@launch
                 }
+                LogBuffer.log("I", TAG, "保存完成: $savedPath")
+                watermarkedBitmap?.recycle()
 
                 // ── 4. 重新绑定预览 + 显示结果（主线程）──
                 val b = _binding ?: return@launch
