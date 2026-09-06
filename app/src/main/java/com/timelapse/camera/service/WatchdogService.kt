@@ -151,6 +151,15 @@ class WatchdogService : Service() {
 
     override fun onDestroy() {
         checkJob?.cancel()
+        // 【自我保护】只有用户仍在拍摄时才重新注册闹钟唤醒自己
+        // isRunning=false 表示用户主动停止，无需恢复
+        val config = CaptureConfig.load(applicationContext)
+        if (config.isRunning) {
+            CaptureScheduler.get(this).scheduleNext(60)
+            LogBuffer.log("I", TAG, "检测拍摄中，注册闹钟60秒后自我唤醒")
+        } else {
+            LogBuffer.log("I", TAG, "已停止拍摄，不恢复守护")
+        }
         releaseWakeLock()
         serviceScope.cancel()
         stopForeground(STOP_FOREGROUND_REMOVE)

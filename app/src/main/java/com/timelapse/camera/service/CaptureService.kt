@@ -98,9 +98,7 @@ class CaptureService : Service() {
         when (intent?.action) {
             ACTION_STOP -> {
                 LogBuffer.log("I", TAG, "收到停止指令")
-                CaptureConfig.load(applicationContext)
-                    .copy(isRunning = false)
-                    .save(applicationContext)
+                // 注意：isRunning 已由 UI 层写入，此处不再修改
                 CaptureScheduler.get(applicationContext).cancel()
                 captureJob?.cancel()
                 // 同步停止守护服务：用户主动停止后无需再保活，避免常驻通知和空转耗电
@@ -111,9 +109,13 @@ class CaptureService : Service() {
             else -> {
                 // ACTION_START 或 null（START_STICKY 恢复）
                 val config = CaptureConfig.load(applicationContext)
-                // 恢复运行状态
+                // isRunning=false 表示用户已停止，主动清理并退出
                 if (!config.isRunning) {
-                    config.copy(isRunning = true).save(applicationContext)
+                    LogBuffer.log("I", TAG, "检测到 isRunning=false，主动停止并清理")
+                    CaptureScheduler.get(applicationContext).cancel()
+                    stopService(Intent(applicationContext, WatchdogService::class.java))
+                    stopSelf()
+                    return START_NOT_STICKY
                 }
                 // 区分启动来源：lastCaptureTime==0 说明是闹钟/Watchdog 唤醒后的重启，否则是正常启动
                 val restartSource = if (config.lastCaptureTime == 0L) "闹钟重启" else "正常启动"
@@ -128,6 +130,12 @@ class CaptureService : Service() {
                     LogBuffer.log("E", TAG, "启动前台服务失败: ${e.javaClass.simpleName}: ${e.message}")
                     stopSelf()
                     return START_NOT_STICKY
+                }
+
+                // 【互相守护】检查并恢复 Watchdog，确保保护链完整
+                if (!isWatchdogRunning()) {
+                    LogBuffer.log("I", TAG, "Watchdog 未运行，恢复守护")
+                    startService(Intent(this, WatchdogService::class.java))
                 }
 
                 if (captureJob == null || !captureJob!!.isActive) {
@@ -342,6 +350,13 @@ class CaptureService : Service() {
         } catch (e: Exception) {
             LogBuffer.log("E", TAG, "更新通知失败: ${e.message}")
         }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun isWatchdogRunning(): Boolean {
+        val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val running = am.getRunningServices(Int.MAX_VALUE)
+        return running.any { it.service.className == WatchdogService::class.java.name }
     }
 
     override fun onDestroy() {
