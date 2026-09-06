@@ -1,69 +1,248 @@
-# API 核查清单
+# API Reference
 
-> 项目级知识库。规划阶段一次性核查所有主要 API，新增功能时增量更新。
-> 每条记录必须包含：用途、核查结论（含坑点/注意事项）、官方文档链接。
-
----
-
-## 1. 相机 CameraX (androidx.camera:* 1.4.1)
-
-| API | 用途 | 核查结论 | 文档 |
-|-----|------|---------|------|
-| `ProcessCameraProvider.getInstance(context)` | 获取相机提供者单例 | 返回 `ListenableFuture<ProcessCameraProvider>`（Guava），**不是** Play Services 的 `Task<T>`。协程 `await()` 扩展需用 `kotlinx-coroutines-guava`，**不能用** `kotlinx-coroutines-play-services` | [CameraX 概览](https://developer.android.com/training/camerax) |
-| `ResolutionSelector` + `ResolutionStrategy` | 设置拍照分辨率 | `setTargetResolution()` 已废弃，部分设备上行为异常（如返回 1920x1920）。正确做法：`ResolutionSelector.Builder().setResolutionStrategy(ResolutionStrategy(maxSize, FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER))`，再 `ImageCapture.Builder().setResolutionSelector(selector)` | [配置选项](https://developer.android.com/media/camera/camerax/configuration) |
-| `ImageCapture.takePicture(executor, callback)` | 拍照 | 回调在指定 executor 上执行。主线程安全。`OnImageCapturedCallback.onCaptureSuccess(image)` 返回 `ImageProxy`，用完必须 `close()` | [ImageCapture](https://developer.android.com/reference/androidx/camera/core/ImageCapture) |
-| `ProcessCameraProvider.bindToLifecycle(owner, selector, ...useCases)` | 绑定用例 | 第一个参数是 `LifecycleOwner` 接口，**不是** `Lifecycle`。`LifecycleRegistry` 继承自 `Lifecycle`，不能直接传入。需要构造一个匿名 `LifecycleOwner` 返回 lifecycle | [ProcessCameraProvider](https://developer.android.com/reference/androidx/camera/lifecycle/ProcessCameraProvider) |
-| `provider.unbindAll()` | 解绑所有用例 | 必须在主线程调用。Service 中使用需切 `Dispatchers.Main` | 同上 |
-| `ImageProxy.imageInfo.rotationDegrees` | 照片旋转角度 | CameraX 返回的 JPEG 可能需要旋转校正。`rotationDegrees` 是传感器方向到显示方向的角度差 | [ImageInfo](https://developer.android.com/reference/androidx/camera/core/ImageInfo) |
-| `CameraManager.cameraIdList` + `CameraCharacteristics` | 枚举所有摄像头 | 不需要相机权限。可读取传感器尺寸、焦距、支持的输出分辨率等。用于排查"为什么拍出来不是主摄分辨率" | [CameraCharacteristics](https://developer.android.com/reference/android/hardware/camera2/CameraCharacteristics) |
+> 本文档是对 TimeLapseCamera 所有公开接口的说明，供教学参考和后续扩展时使用。
 
 ---
 
-## 2. 存储
+## 1. CameraXController
 
-| API | 用途 | 核查结论 | 文档 |
-|-----|------|---------|------|
-| `MediaStore.Images.Media.getContentUri(VOLUME_EXTERNAL_PRIMARY)` | DCIM 目录写入入口 | API 29+ Scoped Storage 必须用 MediaStore。用 `RELATIVE_PATH` 指定子目录（如 `DCIM/TimeLapse/202608`），`IS_PENDING=1` 写入中，写完改 `IS_PENDING=0` | [MediaStore](https://developer.android.com/reference/android/provider/MediaStore) |
-| `ContentResolver.insert(uri, values)` | 创建 MediaStore 条目 | 返回 `Uri?`，可能为 null（权限不足/空间满），必须判空 | [ContentResolver](https://developer.android.com/reference/android/content/ContentResolver) |
-| `Environment.getExternalStoragePublicDirectory(DIRECTORY_DCIM)` | 获取 DCIM 路径 | API 29+ 直接访问需 Scoped Storage 适配。App 自己创建的文件可用 File API 读取 | [Environment](https://developer.android.com/reference/android/os/Environment) |
-| `StatFs` | 读取分区可用空间 | `availableBytes` 返回整个分区的可用字节数，不是单个目录配额 | [StatFs](https://developer.android.com/reference/android/os/StatFs) |
+`camera/CameraXController.kt`
 
----
+CameraX 实现的拍摄控制器，每次 `capture()` 完成"绑定→拍照→释放"全流程。
 
-## 3. 系统服务
+### 构造函数
 
-| API | 用途 | 核查结论 | 文档 |
-|-----|------|---------|------|
-| `BatteryManager.getIntProperty(BATTERY_PROPERTY_CAPACITY)` | 读取电量百分比 | API 21+，返回 0-100。需要 `BATTERY_SERVICE` 系统服务 | [BatteryManager](https://developer.android.com/reference/android/os/BatteryManager) |
-| 电池温度 | 读取电池温度 | **没有** `BATTERY_PROPERTY_TEMPERATURE` 常量。正确做法：注册 `ACTION_BATTERY_CHANGED` sticky broadcast（`registerReceiver(null, IntentFilter(...))`），从 `EXTRA_TEMPERATURE` 读取，单位 0.1°C，除以 10 得摄氏度 | [BatteryManager](https://developer.android.com/reference/android/os/BatteryManager) |
-| `AlarmManager.setExactAndAllowWhileIdle()` | 精确定时唤醒 | Doze 模式下也能唤醒。配合 `PendingIntent.getBroadcast()` 使用。API 31+ 需要 `SCHEDULE_EXACT_ALARM` 权限 | [AlarmManager](https://developer.android.com/reference/android/app/AlarmManager) |
-| `PendingIntent.FLAG_IMMUTABLE` / `FLAG_UPDATE_CURRENT` | PendingIntent flag | Android 12+ 创建 `PendingIntent` 必须指定可变性。AlarmManager 触发的广播用 `FLAG_IMMUTABLE`，需要更新 extra 时用 `FLAG_UPDATE_CURRENT \| FLAG_IMMUTABLE` | [PendingIntent](https://developer.android.com/reference/android/app/PendingIntent) |
+```kotlin
+CameraXController(context: Context, cameraId: String, shotRotation: Int)
+```
 
----
+| 参数 | 说明 |
+|------|------|
+| `context` | ApplicationContext，用于获取 CameraManager |
+| `cameraId` | 精确到具体镜头的 ID（如 `"0"`, `"1"`），来自 `CameraEnumerator` |
+| `shotRotation` | 拍摄方向，值为 `Surface.ROTATION_*` 枚举常量（0/1/2/3） |
 
-## 4. 协程
+### 方法
 
-| API | 用途 | 核查结论 | 文档 |
-|-----|------|---------|------|
-| `kotlinx-coroutines-guava` 的 `ListenableFuture.await()` | Guava Future 转挂起函数 | CameraX / AndroidX 架构组件的异步操作返回 `ListenableFuture`，用此扩展。**不要**和 `kotlinx-coroutines-play-services`（Firebase/Play Services `Task<T>` 用）搞混 | [kotlinx-coroutines-guava](https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-guava/) |
-| `suspendCancellableCoroutine` | 回调 API 转挂起函数 | 比 `suspendCoroutine` 多了取消支持。需要在 `cont.invokeOnCancellation` 中清理资源 | [suspendCancellableCoroutine](https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines/suspend-cancellable-coroutine.html) |
-| `CancellationException` | 协程取消 | 协程取消时抛出，**不应被普通 catch 吞掉**。`catch (e: Exception)` 会漏掉它（它是 `RuntimeException` 子类，会被 Exception 捕获）。正确做法：先 `catch (e: CancellationException) { throw e }`，再 `catch (e: Exception)` | [协程取消](https://kotlinlang.org/docs/cancellation-and-timeouts.html) |
+#### `suspend fun capture(): CaptureResult`
 
----
+执行一次拍摄，返回 `CaptureResult`。
 
-## 5. 生命周期
+- 内部持 `CameraMutex` 锁，防止与预览竞态
+- 拍摄失败时自动切换同方向备用镜头重试一次
+- 线程安全：内部用 `withContext(Dispatchers.Main)` 保证 CameraX 操作在主线程
 
-| API | 用途 | 核查结论 | 文档 |
-|-----|------|---------|------|
-| `LifecycleRegistry` | 手动管理生命周期 | 继承自 `Lifecycle`，**不是** `LifecycleOwner`。Service / 非 lifecycle 组件使用时，需自己实现 `LifecycleOwner` 接口返回该 registry | [LifecycleRegistry](https://developer.android.com/reference/androidx/lifecycle/LifecycleRegistry) |
-| `startForegroundService()` + `startForeground()` | 前台服务 | Android 8.0+ 必须用 `startForegroundService()` 启动，5 秒内调用 `startForeground(id, notification)`，否则 ANR | [前台服务](https://developer.android.com/guide/components/foreground-services) |
-| `START_STICKY` | Service 被杀后自动重启 | `onStartCommand` 返回 `START_STICKY`，系统会在资源充足时重启服务。重启后 intent 为 null | [Service](https://developer.android.com/reference/android/app/Service) |
+#### `fun release()`
+
+释放 CameraX 资源，调用 `unbindAll()` 并清理 lifecycle 状态。
 
 ---
 
-## 维护规则
+## 2. IPhotoStorage
 
-1. **新增功能前**：列出涉及的主要 API → 查官方文档 → 填入此表 → 再写代码
-2. **踩坑后**：把坑点补充到对应 API 的"核查结论"中
-3. **版本升级**：依赖库升级时，重新核查受影响的 API
-4. **审查阶段**：对照本表检查代码，确保用法与结论一致
+`storage/IPhotoStorage.kt`
+
+照片存储接口，定义存储层的统一契约。
+
+### 方法
+
+| 方法 | 说明 |
+|------|------|
+| `suspend fun save(bitmap: Bitmap, timestamp: Long): String` | 保存正式照片，返回文件路径 |
+| `suspend fun saveTestPhoto(bitmap: Bitmap): String` | 保存试拍照片（文件名带毫秒后缀），返回文件路径 |
+| `fun getPhotoCount(): Int` | 已存储照片数量 |
+| `fun getPhotoDir(): File` | 照片根目录 |
+| `fun getLatestPhoto(): File?` | 最新一张照片（按文件名排序） |
+| `fun getAllPhotos(): List<File>` | 全部照片列表（按时间倒序） |
+| `fun getPhotosPaged(offset: Int, limit: Int): List<File>` | 分页查询，用于 RecyclerView 懒加载 |
+| `fun invalidateListCache()` | 使照片列表缓存失效（写入/删除后调用） |
+| `fun cleanupOldPhotos(thresholdGb, safeLineGb, maxDeleteCount): Int` | FIFO 清理旧照片，返回实际删除数 |
+
+---
+
+## 3. WatermarkPipeline
+
+`util/WatermarkPipeline.kt`
+
+水印处理流水线，封装"判断水印开关 → 构建选项 → 应用水印/生成错误图"流程。
+
+### 方法
+
+#### `suspend fun process(config, storage, context, result): Bitmap?`
+
+处理拍摄结果，返回带水印的 Bitmap 或错误黑图。
+
+| 输入 | 行为 | 返回值 |
+|------|------|--------|
+| `Success` + 有水印 | 在 `result.bitmap` 上原地绘制（零额外内存） | 原始 bitmap（已被修改） |
+| `Success` + 无水印 | 不修改，直接返回 | 原始 bitmap |
+| `Failure` | 创建 1280×720 错误黑图 | 新 bitmap（约 3.5MB） |
+
+**调用方负责 recycle 返回值。**
+
+---
+
+## 4. WatermarkProcessor
+
+`watermark/WatermarkProcessor.kt`
+
+直接在 Bitmap 上绘制水印文字的工具类。
+
+### 方法
+
+#### `fun apply(bitmap: Bitmap, timestamp: Long, options: WatermarkOptions): Bitmap`
+
+在 `bitmap` 上绘制水印，返回同一个对象。
+
+- `bitmap` 必须是 `isMutable == true`，否则抛 `IllegalStateException`
+- 左上角：电量/存储/温度（根据 `options` 开关）
+- 右下角：自定义文字 + 时间戳
+
+#### `fun createErrorBitmap(timestamp: Long): Bitmap`
+
+创建一张 1280×720 纯黑图，绘制时间戳和"拍摄失败"提示。
+
+---
+
+## 5. CaptureConfig / StorageLocation / WatermarkOptions
+
+### StorageLocation（枚举）
+
+```kotlin
+enum class StorageLocation { APP_PRIVATE, DCIM, SD_CARD }
+```
+
+| 值 | 路径 | 卸载后 | 系统相册可见 |
+|----|------|--------|------------|
+| `APP_PRIVATE` | `/Android/data/.../Pictures/TimeLapse/` | 删除 | 否 |
+| `DCIM` | `/DCIM/TimeLapse/` | 保留 | 是 |
+| `SD_CARD` | `/SD卡/Android/data/.../Pictures/TimeLapse/` | 删除 | 否 |
+
+### WatermarkOptions（data class）
+
+```kotlin
+data class WatermarkOptions(
+    val customText: String? = null,
+    val showBattery: Boolean = false,
+    val showStorage: Boolean = false,
+    val showTemperature: Boolean = false,
+    val batteryPercent: Int = 0,
+    val storageRemainingGb: Float = 0f,
+    val temperatureCelsius: Float = 0f
+)
+```
+
+所有布尔字段默认 `false`，调用方按需开启。
+
+### CaptureConfig（data class）
+
+完整字段列表见 `config/CaptureConfig.kt` 类头注释。
+
+关键方法：
+- `save(context: Context)` — 全量持久化
+- `updateCaptureProgress(context, count, timestamp)` — 局部更新，避免竞态
+- `updateRemoteInterval(context, interval)` — 局部更新远程间隔
+
+---
+
+## 6. LogBuffer
+
+`util/LogBuffer.kt`
+
+内存环形缓冲 + 文件持久化的日志工具。
+
+### 方法
+
+| 方法 | 说明 |
+|------|------|
+| `fun init(logFileDir: File)` | 初始化日志文件路径，加载历史日志（支持目录变更） |
+| `fun log(level: String, tag: String, message: String)` | 写入一条日志（同时写内存和文件） |
+| `fun getFormattedLogs(): String` | 获取格式化后的日志文本（最多 500 条） |
+| `fun clear()` | 清空内存缓冲和日志文件 |
+
+**线程安全**：内部用 `synchronized(logs)` 保证多线程并发写入不交错。`SimpleDateFormat` 在 `log()` 中每次局部创建，避免线程安全问题。
+
+---
+
+## 7. BatteryMonitor
+
+`util/BatteryMonitor.kt`
+
+读取电池和存储状态的工具类（`object` 单例）。
+
+### 方法
+
+| 方法 | 说明 |
+|------|------|
+| `fun getBatteryPercent(context: Context): Int` | 当前电量百分比（0-100） |
+| `fun getBatteryTemperature(context: Context): Float` | 电池温度（°C），通过 sticky broadcast 读取 |
+| `fun getStorageRemainingGb(storageDir: File): Float` | 指定目录所在分区的剩余空间（GB） |
+
+---
+
+## 8. CaptureScheduler
+
+`scheduler/CaptureScheduler.kt`
+
+基于 AlarmManager 的拍摄调度器，作为前台服务的备份机制。
+
+### 方法
+
+| 方法 | 说明 |
+|------|------|
+| `fun scheduleNext(delaySeconds: Int)` | 安排下次拍摄（精确闹钟优先，失败降级为非精确） |
+| `fun cancel()` | 取消已安排的闹钟 |
+
+**线程安全**：单例由 `synchronized` 保护，`scheduleNext`/`cancel` 在任意线程调用安全。
+
+---
+
+## 9. CameraMutex
+
+`camera/CameraMutex.kt`
+
+进程级相机互斥锁，串行化所有 CameraX 绑定/解绑操作。
+
+### 方法
+
+```kotlin
+suspend fun <T> withLock(block: suspend () -> T): T
+```
+
+所有涉及 `ProcessCameraProvider.bindToLifecycle()` 或 `unbindAll()` 的代码路径都必须通过此方法执行。
+
+---
+
+## 10. 其他公共类
+
+### CameraEnumerator
+
+`camera/CameraEnumerator.kt`
+
+枚举设备所有摄像头，输出详细信息（ID/方向/像素/焦距）。
+
+- `enumerate(context): List<CameraInfo>` — 返回所有摄像头列表
+- `findBestBackCamera(context): CameraInfo?` — 找像素最高的后置摄像头
+
+### RemoteConfigFetcher
+
+`config/RemoteConfigFetcher.kt`
+
+从 URL 拉取下次拍摄延迟（15-3600 秒整数）。
+
+- `fetchNextInterval(url): Int?` — 成功返回秒数，失败返回 `null`
+
+### PermissionChecker
+
+`util/PermissionChecker.kt`
+
+权限检查 + 跳转系统设置工具。
+
+| 方法 | 说明 |
+|------|------|
+| `hasCameraPermission(context): Boolean` | 相机权限状态 |
+| `hasNotificationPermission(context): Boolean` | 通知权限状态 |
+| `canScheduleExactAlarms(context): Boolean` | 精确闹钟权限状态 |
+| `isIgnoringBatteryOptimizations(context): Boolean` | 电池优化忽略状态 |
+| `appDetailsIntent(context): Intent` | 跳转应用详情页 |
+| `batteryOptimizationIntent(): Intent` | 跳转电池优化设置页 |

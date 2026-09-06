@@ -1,5 +1,7 @@
 # 延时相机 (TimeLapseCamera)
 
+> **版本**：v1.0.1 | **最低 API**：26 (Android 8.0) | **目标 API**：34 (Android 14)
+
 旧手机变身延时拍摄设备 —— 长期定期拍照，记录植物生长或城市发展。
 
 ## 核心特性
@@ -61,7 +63,7 @@
 │  │  ↺ 循环直到 isRunning=false 或被取消          │  │
 │  └────────────────────────────────────────────┘  │
 │                                                  │
-│  拍摄时: CameraXController → WatermarkProcessor  │
+│  拍摄时: CameraXController → WatermarkPipeline    │
 │          → IPhotoStorage (工厂按需创建)           │
 └──────────────────────────────────────────────────┘
 

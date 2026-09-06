@@ -11,8 +11,8 @@ android {
         applicationId "com.timelapse.camera"
         minSdk 26          // Android 8.0: CameraX 稳定，getExternalFilesDir无需权限
         targetSdk 34
-        versionCode 15
-        versionName "0.9.8"
+        versionCode 16
+        versionName "1.0.1"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }

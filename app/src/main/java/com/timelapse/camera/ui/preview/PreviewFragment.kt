@@ -218,15 +218,21 @@ class PreviewFragment : Fragment() {
                     return@launch
                 }
                 LogBuffer.log("I", TAG, "保存完成: $savedPath")
-                watermarkedBitmap?.recycle()
 
                 // ── 4. 重新绑定预览 + 显示结果（主线程）──
+                // 注意：先 load() 再 recycle() 不是必须顺序——
+                // Coil 从文件路径（savedPath）加载，不依赖 bitmap 对象；
+                // 但保留此顺序可作为"先消费、后回收"的清晰示范。
                 val b = _binding ?: return@launch
                 b.btnCapture.isEnabled = true
                 startCamera()
 
                 b.cardTestResult.visibility = View.VISIBLE
                 b.ivTestResult.load(savedPath)
+                // recycle 放在 load() 之后：Bitmap 已 compress 写入磁盘，
+                // Coil 从文件路径加载，bitmap 对象此时可安全回收。
+                watermarkedBitmap?.recycle()
+
                 b.tvTestResult.text = if (result is CaptureResult.Success) {
                     getString(R.string.preview_test_saved)
                 } else {

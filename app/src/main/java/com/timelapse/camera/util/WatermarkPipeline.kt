@@ -26,6 +26,14 @@ object WatermarkPipeline {
     /**
      * 处理拍摄结果：判断是否需要水印，返回带水印的 Bitmap 或错误黑图。
      *
+     * 内存设计（教学要点）：
+     * - Success 且有水印：调用 WatermarkProcessor.apply() 在 result.bitmap 上**原地绘制**，
+     *   不创建副本，零额外内存开销。result.bitmap 即返回对象，调用方 recycle 即可。
+     * - Success 且无水印：直接返回 result.bitmap，不调用 apply()。
+     * - Failure：调用 createErrorBitmap() 创建新的 1280x720 错误图（约 3.5MB），与原始 bitmap 无关。
+     *
+     * 调用方负责 recycle 返回值（无论 Success 还是 Failure 路径）。
+     *
      * @param config 拍摄配置
      * @param storage 存储服务（用于查询剩余空间）
      * @param context Android Context，用于读取电量/温度
