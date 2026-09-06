@@ -5,9 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import com.timelapse.camera.service.CaptureService
-import com.timelapse.camera.util.LogBuffer
-
-private const val TAG = "CaptureReceiver"
 
 /**
  * 闹钟备份接收器 —— AlarmManager 备份闹钟到期时触发，重启拍摄服务。
@@ -19,13 +16,12 @@ private const val TAG = "CaptureReceiver"
  * 教学要点：
  * - BroadcastReceiver 生命周期极短，不能执行耗时操作
  * - 此接收器只负责"转发"：启动前台服务，由服务完成实际工作
+ * - 日志初始化由 CaptureService.onCreate() 统一负责，此处不做任何 I/O
  */
 class CaptureReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent?.action != CaptureScheduler.ACTION_TRIGGER_CAPTURE) return
-
-        LogBuffer.log("I", TAG, "闹钟触发 → 启动 CaptureService")
 
         val serviceIntent = Intent(context, CaptureService::class.java).apply {
             action = CaptureService.ACTION_START
@@ -40,7 +36,6 @@ class CaptureReceiver : BroadcastReceiver() {
             // Android 12+ 后台 FGS 启动限制：setExactAndAllowWhileIdle 触发的广播
             // 不在豁免列表内，App 处于后台时 startForegroundService 会抛
             // ForegroundServiceStartNotAllowedException。兜底：5 秒后再试一次
-            LogBuffer.log("E", TAG, "启动前台服务失败: ${e.javaClass.simpleName}: ${e.message}，5秒后重试")
             CaptureScheduler.get(context).scheduleNext(5)
         }
     }

@@ -9,16 +9,12 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
-import androidx.lifecycle.lifecycleScope
-import com.timelapse.camera.camera.CameraEnumerator
 import com.timelapse.camera.databinding.ActivityMainBinding
 import com.timelapse.camera.ui.gallery.GalleryFragment
 import com.timelapse.camera.ui.preview.PreviewFragment
 import com.timelapse.camera.ui.settings.SettingsFragment
 import com.timelapse.camera.ui.status.StatusFragment
 import com.timelapse.camera.service.WatchdogService
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 
 /**
  * 主 Activity —— 底部导航 + 4 个 Fragment 切换。
@@ -73,11 +69,6 @@ class MainActivity : AppCompatActivity() {
         if (savedInstanceState == null) {
             switchFragment(statusFragment)
             binding.bottomNav.selectedItemId = R.id.nav_status
-
-            // 启动时枚举所有摄像头，输出到日志（方便排查分辨率问题）
-            lifecycleScope.launch(Dispatchers.IO) {
-                runCatching { CameraEnumerator.enumerate(this@MainActivity) }
-            }
         }
 
         // 底部导航点击事件
