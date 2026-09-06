@@ -65,7 +65,7 @@ object WatermarkPipeline {
                 }
                 is CaptureResult.Failure -> {
                     LogBuffer.log("E", TAG, "拍摄失败: ${result.message}")
-                    watermarkProcessor.createErrorBitmap(result.timestamp)
+                    watermarkProcessor.createErrorBitmap(System.currentTimeMillis())
                 }
             }
         }

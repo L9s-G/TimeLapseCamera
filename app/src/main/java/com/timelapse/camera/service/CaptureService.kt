@@ -1,5 +1,6 @@
 package com.timelapse.camera.service
 
+import android.app.ActivityManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -79,7 +80,6 @@ class CaptureService : Service() {
      * 生命周期边界：onCreate → onDestroy，与服务完全一致。
      */
     private val serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
-    private val watermarkProcessor = WatermarkProcessor()
     private val remoteConfigFetcher = RemoteConfigFetcher()
     private lateinit var storage: IPhotoStorage
     private var wakeLock: PowerManager.WakeLock? = null
