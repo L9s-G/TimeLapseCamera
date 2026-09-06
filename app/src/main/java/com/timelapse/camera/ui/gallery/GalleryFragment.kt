@@ -175,6 +175,7 @@ class GalleryFragment : Fragment() {
     }
 
     companion object {
+        private const val TAG = "GalleryFragment"
         fun newInstance() = GalleryFragment()
     }
 }

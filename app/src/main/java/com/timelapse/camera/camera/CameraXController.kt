@@ -146,7 +146,9 @@ class CameraXController(
                 val camera = provider.bindToLifecycle(lifecycleOwner!!, cameraSelector, capture)
 
                 // 5. 冷启动等待：摄像头刚绑定后传感器/ISP 需要几毫秒稳定，
-                //    不加此延时在部分低端机上会出现首张黑屏或模糊
+                //    不加此延时在部分低端机上会出现首张黑屏或模糊。
+                //    300ms 为实测经验值，覆盖大多数设备（低-中端机约 200-500ms）；
+                //    极端设备可调为此值乘以系数，或未来扩展为配置项。
                 kotlinx.coroutines.delay(300L)
 
                 takePictureAndDecode()

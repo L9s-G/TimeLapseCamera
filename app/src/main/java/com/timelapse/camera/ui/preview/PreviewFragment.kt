@@ -189,7 +189,7 @@ class PreviewFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             try {
                 // ── 1. 释放预览（主线程，持锁防止打断拍摄服务）──
-                LogBuffer.log("I", "TestPhoto", "试拍开始，释放预览")
+                LogBuffer.log("I", TAG, "试拍开始，释放预览")
                 CameraMutex.withLock { cameraProvider?.unbindAll() }
 
                 val timestamp = System.currentTimeMillis()
@@ -201,12 +201,12 @@ class PreviewFragment : Fragment() {
                     config.shotRotation
                 )
                 val result = camera.capture()
-                LogBuffer.log("I", "TestPhoto",
+                LogBuffer.log("I", TAG,
                     "拍摄完成: ${if (result is CaptureResult.Success) "成功" else "失败"}")
 
                 // ── 3. 水印 + 保存（IO 线程，避免阻塞 UI）──
                 // 水印内容全关时直接跳过水印，节省内存
-                LogBuffer.log("I", "TestPhoto", "开始保存处理")
+                LogBuffer.log("I", TAG, "开始保存处理")
                 val savedPath = withContext(Dispatchers.IO) {
                     val hasWatermark = !config.watermarkText.isNullOrBlank() ||
                             config.watermarkShowBattery ||
@@ -215,10 +215,10 @@ class PreviewFragment : Fragment() {
 
                     val bitmapToSave = when (result) {
                         is CaptureResult.Success -> {
-                            LogBuffer.log("I", "TestPhoto",
+                            LogBuffer.log("I", TAG,
                                 "照片尺寸: ${result.bitmap.width}x${result.bitmap.height}")
                             if (hasWatermark) {
-                                LogBuffer.log("I", "TestPhoto", "开始水印处理")
+                                LogBuffer.log("I", TAG, "开始水印处理")
                                 val watermarkOptions = WatermarkOptions(
                                     customText = config.watermarkText,
                                     showBattery = config.watermarkShowBattery,
@@ -230,7 +230,7 @@ class PreviewFragment : Fragment() {
                                 )
                                 watermarkProcessor.apply(result.bitmap, result.timestamp, watermarkOptions)
                             } else {
-                                LogBuffer.log("I", "TestPhoto", "水印全关，跳过水印")
+                                LogBuffer.log("I", TAG, "水印全关，跳过水印")
                                 result.bitmap
                             }
                         }
@@ -239,9 +239,9 @@ class PreviewFragment : Fragment() {
                         }
                     }
 
-                    LogBuffer.log("I", "TestPhoto", "写入存储")
+                    LogBuffer.log("I", TAG, "写入存储")
                     val path = storage.saveTestPhoto(bitmapToSave)
-                    LogBuffer.log("I", "TestPhoto", "保存完成: $path")
+                    LogBuffer.log("I", TAG, "保存完成: $path")
                     path
                 }
 
@@ -257,9 +257,9 @@ class PreviewFragment : Fragment() {
                 } else {
                     getString(R.string.preview_test_fail)
                 }
-                LogBuffer.log("I", "TestPhoto", "试拍流程全部完成")
+                LogBuffer.log("I", TAG, "试拍流程全部完成")
             } catch (e: Throwable) {
-                LogBuffer.log("E", "TestPhoto", "试拍异常: ${e.javaClass.simpleName}: ${e.message}")
+                LogBuffer.log("E", TAG, "试拍异常: ${e.javaClass.simpleName}: ${e.message}")
                 e.printStackTrace()
                 val b = _binding
                 if (b != null) {
@@ -272,6 +272,7 @@ class PreviewFragment : Fragment() {
     }
 
     companion object {
+        private const val TAG = "PreviewFragment"
         fun newInstance() = PreviewFragment()
     }
 }

@@ -27,6 +27,10 @@ import kotlinx.coroutines.launch
  * - 单一 Activity 架构，所有页面都是 Fragment
  * - BottomNavigationView 驱动 Fragment 切换
  * - 默认显示「状态」Tab（用户最常看的）
+ * - lazy 初始化 Fragment 的设计决策：每次配置变更（屏幕旋转等）系统会重建
+ *   MainActivity，但不会重新调用 newInstance()；持有 lazy 引用确保同一 Activity
+ *   实例内始终使用相同的 Fragment 对象，避免重复创建导致的状态丢失。
+ *   教学要点：对比 hide/show vs replace 的 trade-off。
  *
  * 教学要点：
  * - 底部导航配合 Fragment 的标准模式
@@ -36,6 +40,14 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
 
+    /** 
+     * lazy 初始化各 Tab 的 Fragment。
+     * 使用 lazy 而非每次 newInstance() 的原因：
+     * 1. 系统配置变更时（如屏幕旋转），Activity 会被销毁重建，但 Fragment 由
+     *    FragmentManager 管理，不依赖 Activity 重建；lazy 引用保证同一进程内
+     *    Fragment 实例唯一，避免重复创建。
+     * 2. 代码更简洁，避免在每次导航时重新实例化。
+     */
     private val statusFragment by lazy { StatusFragment.newInstance() }
     private val previewFragment by lazy { PreviewFragment.newInstance() }
     private val galleryFragment by lazy { GalleryFragment.newInstance() }

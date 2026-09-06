@@ -479,6 +479,7 @@ class SettingsFragment : Fragment() {
     }
 
     companion object {
+        private const val TAG = "SettingsFragment"
         fun newInstance() = SettingsFragment()
     }
 }

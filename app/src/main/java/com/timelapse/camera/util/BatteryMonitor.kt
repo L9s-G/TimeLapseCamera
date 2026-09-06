@@ -27,6 +27,10 @@ object BatteryMonitor {
      * Android 没有 BATTERY_PROPERTY_TEMPERATURE 常量，温度只能通过
      * ACTION_BATTERY_CHANGED 这个 sticky broadcast intent 读取。
      * 返回值单位为 0.1°C，需除以 10。
+     *
+     * 注意：传入 null receiver 是获取 sticky broadcast 的标准写法——
+     * 系统会返回最后一次已发出的广播内容，不需要也不应该手动 unregisterReceiver，
+     * 否则会在下次电池事件时抛出 IllegalStateException。
      */
     fun getBatteryTemperature(context: Context): Float {
         val intent = context.registerReceiver(

@@ -35,6 +35,10 @@ class LocalPhotoStorage(
     private val customBaseDir: File? = null
 ) : IPhotoStorage {
 
+    companion object {
+        private const val TAG = "LocalPhotoStorage"
+    }
+
     private val baseDir = (customBaseDir ?: File(
         // getExternalFilesDir 理论上可返回 null（存储卷被移除），兜底到内部 filesDir
         context.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
