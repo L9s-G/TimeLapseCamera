@@ -8,12 +8,14 @@
 
 - **底部导航 4 Tab**：状态 / 预览 / 相册 / 设置，功能分区清晰
 - **三层保活**：前台服务通知（主）+ START_STICKY（恢复）+ AlarmManager 备份闹钟
+- **双进程守护**：主服务 + `:watchdog` 独立进程守护，互监控
 - **倒计时通知**：`setChronometerCountDown` 让系统自动渲染倒计时，零额外功耗
 - **按需启停摄像头**：每次拍摄重新初始化摄像头，拍完立即释放，间隔期零硬件功耗
 - **丰富水印**：时间戳 + 自定义文字 + 电量/存储/温度（可开关）
 - **失败回退**：镜头自动切换 + 黑图占位 + 写入不崩溃 + 进程被杀恢复
 - **远程配置下发**：通过 URL 动态调整拍摄间隔（URL 格式校验 + 实际抓取验证）
 - **模块插拔设计**：相机、存储、配置均可独立替换，适合教学
+- **自动化日志体系（LogBuffer）**：双进程三身份，首次 log() 自动初始化，状态页三 Tab 切换查看，一键导出分享
 
 ## UI 架构
 
@@ -41,30 +43,46 @@
 
 ```
 ┌──────────────────────────────────────────────────┐
+│              TimeLapseApplication                 │
+│         LogBuffer.initialize(appContext)          │
+│         （全项目唯一的启动级初始化）                │
+└──────────────────────────────────────────────────┘
+                  │ 主进程 + :watchdog 各自独立执行
+                  ▼
+┌──────────────────────────────────────────────────┐
 │                  MainActivity                      │
 │         （底部导航 + 4 个 Fragment）                 │
 │  StatusFragment  PreviewFragment  GalleryFragment  │
 │  SettingsFragment                                  │
+│   │                                                │
+│   └─ StatusFragment: 纯读者，三 Tab 切换 + 一键导出  │
 └──────────────────┬─────────────────────────────────┘
                    │ startForegroundService(ACTION_START)
                    ▼
 ┌──────────────────────────────────────────────────┐
-│              CaptureService (持久化前台服务)         │
-│          通知栏显示倒计时 → 进程不被系统杀死          │
+│         CaptureService（主进程前台服务）             │
+│    通知栏显示倒计时 → 进程不被系统杀死               │
+│    ID_MAIN 日志 (log_main.txt)                     │
 │  ┌────────────────────────────────────────────┐  │
 │  │            captureLoop (协程循环)             │  │
 │  │                                            │  │
 │  │  取配置 → 远程间隔 → 拍照 → 水印 → 存盘       │  │
 │  │     │                                    │  │
 │  │     ├── 更新倒计时通知（系统自动渲染）         │  │
-│  │     ├── scheduleNext() 备份闹钟             │  │
-│  │     └── delay(间隔) → 协程挂起，WakeLock 全程持有防息屏秒睡│ │
-│  │                                            │  │
-│  │  ↺ 循环直到 isRunning=false 或被取消          │  │
+│  │     ├── scheduleNext() → ID_SCHEDULER 日志   │  │
+│  │     └── delay(间隔) → WakeLock 全程持有      │  │
 │  └────────────────────────────────────────────┘  │
 │                                                  │
-│  拍摄时: CameraXController → WatermarkPipeline    │
-│          → IPhotoStorage (工厂按需创建)           │
+│  【互相守护】Watchdog 不存活 → startService 恢复   │
+└──────────────────────────────────────────────────┘
+        │                                                │
+        │ 启动 :watchdog 独立进程                         │ 被杀后重启
+        ▼                                                ▼
+┌──────────────────────────────────────────────────┐  AlarmManager
+│           WatchdogService（守护进程）               │   备份闹钟
+│  ID_WATCHDOG 日志 (log_watchdog.txt)              │◀── CaptureReceiver
+│  每 60s 检查主服务存活；onDestroy 设 60s 闹钟交接   │
+│  scheduleNext() → ID_SCHEDULER 日志                │
 └──────────────────────────────────────────────────┘
 
 三层保活:
@@ -74,6 +92,14 @@
 
   AlarmManager ──闹钟到期──▶ CaptureReceiver ──▶ startForegroundService
   开机自启    ──BOOT_COMPLETED──▶ BootReceiver ──▶ startForegroundService
+
+LogBuffer 三个身份文件（均位于 context.filesDir/，应用私有目录）：
+  ① ID_MAIN      → log_main.txt       主服务/相机/存储/UI
+  ② ID_WATCHDOG  → log_watchdog.txt   守护进程
+  ③ ID_SCHEDULER → log_scheduler.txt  AlarmManager 闹钟事件（两个进程共用）
+
+首次调用 log(identity) 时自动完成：加载历史日志 → 创建文件 → 后续落盘，
+外部组件完全不需要调用 init()，不存在"未 init 先写"的时序问题。
 ```
 
 ## 目录结构
@@ -90,10 +116,11 @@
 ├── build.gradle                 # 根构建文件（AGP/Kotlin 插件版本）
 │
 app/src/main/java/com/timelapse/camera/
+├── TimeLapseApplication.kt      # Application 入口：LogBuffer 全局初始化
 ├── MainActivity.kt              # 主界面：底部导航 + Fragment 切换
 │
 ├── ui/                          # ── UI 层（Fragment）──
-│   ├── status/StatusFragment.kt    #   状态页：倒计时 + 最近照片 + 统计
+│   ├── status/StatusFragment.kt    #   状态页：倒计时 + 统计 + 三 Tab 日志 + 一键导出
 │   ├── preview/PreviewFragment.kt  #   预览页：实时画面 + 试拍
 │   ├── gallery/GalleryFragment.kt  #   相册页：网格照片列表
 │   └── settings/SettingsFragment.kt #  设置页：参数 + 权限状态
@@ -120,6 +147,7 @@ app/src/main/java/com/timelapse/camera/
 │
 ├── util/                         # ── 工具类 ──
 │   ├── BatteryMonitor.kt         #   电量/存储/温度读取
+│   ├── LogBuffer.kt              #   日志：三身份（main/watchdog/scheduler）+ 自动初始化 + 一键导出
 │   └── PermissionChecker.kt      #   权限检查 + 跳转系统设置
 │
 ├── scheduler/                    # ── 调度模块（备份）──
@@ -712,6 +740,22 @@ TimeLapse/
 - DCIM 公共目录：API 29+ 必须用 `MediaStore` API（Scoped Storage），API 26-28 用 File API + `WRITE_EXTERNAL_STORAGE`
 - SD 卡：`getExternalFilesDirs()` 返回数组，`[0]` 是内部存储，`[1]+` 是 SD 卡，复用 App 私有目录逻辑
 - 工厂模式：`PhotoStorageFactory` 根据配置创建不同实现，调用方只依赖 `IPhotoStorage` 接口
+
+### 日志文件位置（LogBuffer）
+
+为了避免与存储位置耦合、消除"未 init 先写"的时序 bug，日志文件固定保存在**应用私有目录** `context.filesDir/` 下，文件名与身份一一对应：
+
+| 身份 | 文件名 | 记录内容 |
+|------|--------|---------|
+| ID_MAIN | `log_main.txt` | 主进程所有业务：CaptureService、相机、存储、水印、UI 等 |
+| ID_WATCHDOG | `log_watchdog.txt` | watchdog 独立进程的守护检测、重启决策、自我退出 |
+| ID_SCHEDULER | `log_scheduler.txt` | AlarmManager 闹钟事件：安排、取消、权限降级 |
+
+> 日志不跟随照片存储路径的理由：照片可能放 SD 卡或 DCIM，日志的访问模式完全不同——需要保证稳定可写、私有、不被媒体扫描器打扰。直接放在 `filesDir` 是最简单可靠的。
+
+**初始化机制**：仅在 `TimeLapseApplication.onCreate()` 调一次 `LogBuffer.initialize(appContext)`。之后任何组件直接 `log(identity, level, tag, msg)` 即可，首条 log 会自动完成该身份的历史加载、文件创建和后续落盘，不存在"未初始化"问题。StatusFragment 作为纯读者，**完全不调用 init**，只在 UI 上做三 Tab 切换展示和导出。
+
+**导出**：状态页日志卡片右上角「导出」按钮，点击后将当前 Tab 的日志文件复制到 `external_cache_dir/exports/` 下（带时间戳文件名），用 `FileProvider` 分享 Intent 发送给用户，可以存云盘或邮件发送。
 
 ## 扩展方向
 

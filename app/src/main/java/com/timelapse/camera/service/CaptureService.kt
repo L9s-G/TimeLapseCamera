@@ -90,7 +90,6 @@ class CaptureService : Service() {
     override fun onCreate() {
         super.onCreate()
         storage = PhotoStorageFactory.create(applicationContext, CaptureConfig.load(applicationContext))
-        LogBuffer.init(storage.getPhotoDir(), LogBuffer.ID_MAIN)
         createNotificationChannel()
     }
 

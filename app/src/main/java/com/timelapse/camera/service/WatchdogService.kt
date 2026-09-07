@@ -13,7 +13,6 @@ import androidx.core.app.NotificationCompat
 import com.timelapse.camera.R
 import com.timelapse.camera.config.CaptureConfig
 import com.timelapse.camera.scheduler.CaptureScheduler
-import com.timelapse.camera.storage.PhotoStorageFactory
 import com.timelapse.camera.util.LogBuffer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -53,11 +52,6 @@ class WatchdogService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        // 独立进程：LogBuffer 需在本进程内重新初始化，否则守护日志全部静默丢失
-        runCatching {
-            val config = CaptureConfig.load(applicationContext)
-            LogBuffer.init(PhotoStorageFactory.create(applicationContext, config).getPhotoDir(), LogBuffer.ID_WATCHDOG)
-        }
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
         acquireWakeLock()

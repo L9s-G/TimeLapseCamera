@@ -149,18 +149,28 @@ data class WatermarkOptions(
 
 `util/LogBuffer.kt`
 
-内存环形缓冲 + 文件持久化的日志工具。
+内存环形缓冲 + 文件持久化的日志工具。**自动初始化**：唯一显式调用是 Application.onCreate() 里的 `initialize(appContext)`，后续所有组件直接 `log()`，首次调用自动完成身份状态加载。
+
+### 身份常量
+
+| 常量 | 文件（context.filesDir/） | 说明 |
+|------|--------------------------|------|
+| `ID_MAIN = "main"` | `log_main.txt` | 主进程所有业务日志 |
+| `ID_WATCHDOG = "watchdog"` | `log_watchdog.txt` | 守护进程日志 |
+| `ID_SCHEDULER = "scheduler"` | `log_scheduler.txt` | AlarmManager 闹钟事件（两进程共用） |
 
 ### 方法
 
 | 方法 | 说明 |
 |------|------|
-| `fun init(logFileDir: File)` | 初始化日志文件路径，加载历史日志（支持目录变更） |
-| `fun log(level: String, tag: String, message: String)` | 写入一条日志（同时写内存和文件） |
-| `fun getFormattedLogs(): String` | 获取格式化后的日志文本（最多 500 条） |
-| `fun clear()` | 清空内存缓冲和日志文件 |
+| `fun initialize(context: Context)` | 全局一次性初始化（Application.onCreate），幂等。之后才可使用全部功能 |
+| `fun log(identity: String, level: String, tag: String, message: String)` | 写入一条日志（同时写内存 + 文件 append）。首次调用自动完成该 identity 的历史加载与文件创建 |
+| `fun getFormattedLogs(identity: String): String` | 纯读取，返回最多 500 条按 `\n` 拼接的日志。未初始化身份返回空串（不触发 init） |
+| `fun exportLogs(identity: String): File?` | 将当前身份日志复制到 external cache（带时间戳），返回临时文件；未初始化或出错返回 null |
 
-**线程安全**：内部用 `synchronized(logs)` 保证多线程并发写入不交错。`SimpleDateFormat` 在 `log()` 中每次局部创建，避免线程安全问题。
+**线程安全**：全部公开方法用全局 `lock` 保护，多协程并发写入不交错。`SimpleDateFormat` 在每次调用时局部创建，规避线程安全问题。
+
+**进程隔离说明**：两进程各自独立维护一份状态，但 ID_SCHEDULER 用同一文件。Linux append 模式短行写是原子的，文件不会交错；UI 侧 getFormattedLogs() 只读取本进程内存 buffer，若需跨进程查看调度日志请用 `exportLogs()` 导出文件。
 
 ---
 

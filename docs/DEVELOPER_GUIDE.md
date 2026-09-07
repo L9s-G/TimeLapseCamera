@@ -30,7 +30,35 @@
 
 **设计理由**：国产 ROM（小米 MIUI、华为 EMUI 等）对后台进程管理激进，单一保活机制不可靠，三层叠加才能覆盖绝大多数场景。
 
-### 1.2 相机生命周期
+### 1.2 LogBuffer 自动初始化 + 三身份
+
+```
+Application.onCreate()
+    └─ LogBuffer.initialize(appContext)    ← 唯一显式调用，Context 注入
+              │
+              ▼
+组件首次 LogBuffer.log(identity, ...)
+    └─ LogBuffer 内部 autoInitIfNeeded：
+           ├─ 从 context.filesDir 派生日志文件 log_<identity>.txt
+           ├─ 加载该文件历史 MAX_SIZE 条到内存 buffer
+           ├─ 创建 State，文件路径绑定
+           └─ 再写当前日志（内存 + 文件 append）
+              │
+              ▼
+           后续 log() 直接走落盘路径，零时序风险
+
+三身份文件（filesDir/）：
+  log_main.txt       主进程所有业务日志
+  log_watchdog.txt   守护进程日志
+  log_scheduler.txt  AlarmManager 闹钟事件（两进程共用）
+```
+
+**关键设计：**
+- 外部完全不需要调用任何 init()，所有组件"只管 log"
+- getFormattedLogs() 是纯读操作，不触发初始化（StatusFragment 是纯 Reader）
+- 固定私有目录，不跟随照片存储路径，避免存储位置切换造成日志丢失
+
+### 1.3 相机生命周期
 
 ```
 CaptureService
@@ -45,7 +73,7 @@ PreviewFragment
 
 **关键约束**：`ProcessCameraProvider` 是进程级单例，拍摄服务与预览页共用，任何一方的 `unbindAll()` 都会解绑对方用例。`CameraMutex` 将冲突从"互相打断"降级为"排队等待"。
 
-### 1.3 Bitmap 责任链
+### 1.4 Bitmap 责任链
 
 ```
 CameraXController
@@ -152,7 +180,30 @@ IPhotoStorage.save() / saveTestPhoto()
 
 **缓存策略**：`sortedCache`（`@Volatile`）缓存排序结果，写入/删除后失效，避免相册页每次分页都做 O(N log N) 全量扫描。
 
-### 2.6 配置系统
+### 2.6 LogBuffer（工具类）
+
+`util/LogBuffer.kt`
+
+内存环形缓冲 + 文件持久化，零显式 init。
+
+**设计意图（解决了什么 bug）**：
+- 旧设计要求每个 Writer 在合适时机 init(dir, identity)，但双进程架构下 Watchdog 进程调用 CaptureScheduler 时它的日志身份（ID_SCHEDULER）没人显式 init，导致调度日志静默丢失
+- StatusFragment 作为纯读者也被要求 init，职责混乱
+- 新设计：LogBuffer.initialize(appContext) 在 Application.onCreate() 只做一次，后续所有组件只调 log()，首次调用自动完成身份初始化
+
+**三个身份**：
+
+| 常量 | 文件（filesDir/） | 归属进程 | 记录内容 |
+|------|-----------------|---------|---------|
+| ID_MAIN | log_main.txt | 主进程 | CaptureService/相机/存储/UI/水印 等 |
+| ID_WATCHDOG | log_watchdog.txt | :watchdog | 守护检测、重启闹钟、自行退出 |
+| ID_SCHEDULER | log_scheduler.txt | 两进程共用 | AlarmManager 闹钟事件（安排、取消、权限降级） |
+
+**线程/进程隔离**：
+- 全局单例 object，但两进程各自一份 JVM 内存，完全独立
+- 两进程共用 ID_SCHEDULER 文件 —— 分别 append，Linux 下 append 模式对短行写入是原子的，不会交错
+
+### 2.7 配置系统
 
 `config/CaptureConfig.kt`
 
