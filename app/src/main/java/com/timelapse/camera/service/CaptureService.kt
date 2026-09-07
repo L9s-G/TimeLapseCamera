@@ -12,6 +12,7 @@ import android.graphics.Bitmap
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import com.timelapse.camera.MainActivity
 import com.timelapse.camera.R
@@ -118,7 +119,7 @@ class CaptureService : Service() {
                 }
                 // 区分启动来源：lastCaptureTime==0 说明是闹钟/Watchdog 唤醒后的重启，否则是正常启动
                 val restartSource = if (config.lastCaptureTime == 0L) "闹钟重启" else "正常启动"
-                LogBuffer.log(LogBuffer.ID_MAIN, "I", TAG, "服务启动 [来源=$restartSource]，间隔 ${config.intervalSeconds}s")
+                LogBuffer.log(LogBuffer.ID_MAIN, "I", TAG, "服务启动 [来源=$restartSource]，间隔 ${config.intervalSeconds}s，唤醒时间=${SystemClock.elapsedRealtime()}")
                 val initialDelay = if (config.lastRemoteInterval > 0)
                     config.lastRemoteInterval else config.intervalSeconds
                 // Android 12+ 后台启动前台服务 / Android 14 camera type 缺 CAMERA 权限时
@@ -165,7 +166,10 @@ class CaptureService : Service() {
         try {
             while (true) {
               try {
+                // triggerAt 在循环一开始锁定，后续所有操作（remote config fetch、cleanup）都不影响它，
+                // 确保 alarm 对齐固定触发点，remote config 只在下一次循环生效。
                 var config = CaptureConfig.load(applicationContext)
+                var triggerAt = SystemClock.elapsedRealtime() + config.intervalSeconds * 1000L
 
                 if (!config.isRunning) break
 
@@ -229,7 +233,7 @@ class CaptureService : Service() {
                             val newCount = config.captureCount + 1
                             CaptureConfig.updateCaptureProgress(applicationContext, newCount, timestamp)
                             config = config.copy(captureCount = newCount, lastCaptureTime = timestamp)
-                            LogBuffer.log(LogBuffer.ID_MAIN, "I", TAG, "拍摄完成 #$newCount")
+                            LogBuffer.log(LogBuffer.ID_MAIN, "I", TAG, "拍摄完成 #$newCount，下次唤醒=$triggerAt")
                         } else {
                             LogBuffer.log(LogBuffer.ID_MAIN, "W", TAG, "拍摄失败，已保存黑图占位")
                         }
@@ -241,13 +245,13 @@ class CaptureService : Service() {
                 }
 
                 // ── 3. 更新倒计时通知（系统自动渲染，零功耗）──
-                updateNotification(nextDelay)
+                updateNotification((triggerAt - SystemClock.elapsedRealtime()).toInt().coerceAtLeast(1))
 
                 // ── 4. AlarmManager 备份：服务被杀后闹钟重启 ──
-                CaptureScheduler.get(this).scheduleNext(nextDelay)
+                CaptureScheduler.get(this).scheduleNext((triggerAt - SystemClock.elapsedRealtime()).toInt().coerceAtLeast(1))
 
                 // ── 5. 协程等待（主调度，WakeLock 全程持有防息屏秒睡）──
-                delay(nextDelay * 1000L)
+                delay(maxOf(0L, triggerAt - SystemClock.elapsedRealtime()))
               } catch (e: CancellationException) {
                   throw e
               } catch (e: Throwable) {
