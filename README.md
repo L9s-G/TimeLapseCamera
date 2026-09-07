@@ -34,7 +34,7 @@
 
 | Tab | 功能 | 典型使用场景 |
 |-----|------|-------------|
-| **状态** | 倒计时、电量/存储/温度、开始/停止 | 用户打开 App 第一眼，确认运行正常 |
+| **状态** | 运行状态、拍摄统计、电量/存储/温度、开始/停止、三 Tab 日志 | 用户打开 App 第一眼，确认运行正常 |
 | **预览** | 实时画面 + 「立即拍一张」试拍 | 安装时构图对齐，验证水印效果 |
 | **相册** | 网格浏览历史照片 | 回看记录，检查故障时段 |
 | **设置** | 拍摄参数、水印开关、权限状态、远程配置 | 调整参数，检查权限 |
@@ -120,7 +120,7 @@ app/src/main/java/com/timelapse/camera/
 ├── MainActivity.kt              # 主界面：底部导航 + Fragment 切换
 │
 ├── ui/                          # ── UI 层（Fragment）──
-│   ├── status/StatusFragment.kt    #   状态页：倒计时 + 统计 + 三 Tab 日志 + 一键导出
+│   ├── status/StatusFragment.kt    #   状态页：运行状态 + 统计 + 三 Tab 日志 + 一键导出
 │   ├── preview/PreviewFragment.kt  #   预览页：实时画面 + 试拍
 │   ├── gallery/GalleryFragment.kt  #   相册页：网格照片列表
 │   └── settings/SettingsFragment.kt #  设置页：参数 + 权限状态

@@ -18,7 +18,6 @@
     <!-- 状态页 -->
     <string name="status_running">● 运行中</string>
     <string name="status_stopped">○ 未运行</string>
-    <string name="status_next_capture">下次拍摄倒计时</string>
     <string name="status_stats">统计信息</string>
     <string name="status_count_format">📷 已拍摄：%1$d 张</string>
     <string name="status_battery_format">🔋 电量：%1$d%%</string>

@@ -51,7 +51,7 @@ data class CaptureConfig(
     val captureCount: Int = 0,
     /** 上次有效远程间隔（远程失败时回退使用） */
     val lastRemoteInterval: Int = 0,
-    /** 上次成功拍摄的时间戳（用于 UI 推算真实倒计时） */
+    /** 上次成功拍摄的时间戳，服务重启时用于判断启动来源 */
     val lastCaptureTime: Long = 0,
     /** 照片存储位置 */
     val storageLocation: StorageLocation = StorageLocation.APP_PRIVATE,

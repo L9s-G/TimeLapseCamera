@@ -229,7 +229,7 @@ class CaptureService : Service() {
                     }.onSuccess {
                         if (result is CaptureResult.Success) {
                             // 局部更新：只写拍摄进度的 key，避免全量 save 覆盖用户刚改的其他配置。
-                            // lastCaptureTime 在拍摄成功后才更新（UI 据此推算倒计时，拍完起算更准确）
+                            // lastCaptureTime 在拍摄成功后才更新，下次启动时用于区分「闹钟重启」vs「正常启动」
                             val newCount = config.captureCount + 1
                             CaptureConfig.updateCaptureProgress(applicationContext, newCount, timestamp)
                             config = config.copy(captureCount = newCount, lastCaptureTime = timestamp)

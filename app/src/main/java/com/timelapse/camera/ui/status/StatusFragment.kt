@@ -29,7 +29,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 
 /**
  * 状态页 Fragment —— 默认首页。
@@ -41,7 +40,7 @@ import java.io.File
  * - 一键导出当前 Tab 的日志文件
  *
  * 设计要点：
- * - 进入页面时加载一次完整状态，后续每秒刷新全部信息
+ * - 进入页面时加载一次完整状态，后续每3秒刷新全部信息
  * - StatusFragment 是纯读者，**不管理 LogBuffer 生命周期**：
  *   - 不再调用 LogBuffer.init()
  *   - 只读 getFormattedLogs()
@@ -166,7 +165,7 @@ class StatusFragment : Fragment() {
         stopStatusRefresh()
         refreshJob = viewLifecycleOwner.lifecycleScope.launch {
             while (true) {
-                delay(1000)
+                delay(3000)
                 val identity = currentLogIdentity
                 val snapshot = withContext(Dispatchers.IO) {
                     val curConfig = CaptureConfig.load(requireContext())
@@ -181,14 +180,6 @@ class StatusFragment : Fragment() {
                 }
                 val b = _binding ?: return@launch
                 val curConfig = snapshot.config
-                val now = System.currentTimeMillis()
-
-                val interval = if (curConfig.lastRemoteInterval > 0)
-                    curConfig.lastRemoteInterval else curConfig.intervalSeconds
-                val remaining = if (curConfig.lastCaptureTime > 0) {
-                    (curConfig.lastCaptureTime + interval * 1000L - now).coerceAtLeast(0)
-                } else 0L
-                b.tvCountdown.text = if (remaining > 0) formatDuration(remaining) else "--:--:--"
 
                 val isRunning = curConfig.isRunning
                 b.tvStatus.text = if (isRunning) getString(R.string.status_running)
@@ -270,11 +261,10 @@ class StatusFragment : Fragment() {
 
     private fun startCapture() {
         val context = requireContext()
-        val now = System.currentTimeMillis()
         context.startForegroundService(Intent(context, CaptureService::class.java).apply {
             action = CaptureService.ACTION_START
         })
-        config = config.copy(isRunning = true, lastCaptureTime = now)
+        config = config.copy(isRunning = true)
         config.save(context)
         updateUI()
     }
@@ -287,14 +277,6 @@ class StatusFragment : Fragment() {
         config = config.copy(isRunning = false)
         config.save(context)
         updateUI()
-    }
-
-    private fun formatDuration(ms: Long): String {
-        val totalSeconds = ms / 1000
-        val hours = totalSeconds / 3600
-        val minutes = (totalSeconds % 3600) / 60
-        val seconds = totalSeconds % 60
-        return "%02d:%02d:%02d".format(hours, minutes, seconds)
     }
 
     companion object {

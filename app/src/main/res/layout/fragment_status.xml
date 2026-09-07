@@ -11,7 +11,7 @@
         android:orientation="vertical"
         android:padding="16dp">
 
-        <!-- 状态 + 统计 + 倒计时（同行：左统计，右倒计时） -->
+        <!-- 状态 + 统计 -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -37,77 +37,43 @@
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal">
+                    android:orientation="vertical">
 
-                    <!-- 左：统计信息 -->
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_gravity="center_vertical"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:id="@+id/tvCaptureCount"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="@string/status_count_format"
-                            android:textSize="13sp" />
-
-                        <TextView
-                            android:id="@+id/tvBattery"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp"
-                            android:text="@string/status_battery_format"
-                            android:textSize="13sp" />
-
-                        <TextView
-                            android:id="@+id/tvStorage"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp"
-                            android:text="@string/status_storage_format"
-                            android:textSize="13sp" />
-
-                        <TextView
-                            android:id="@+id/tvTemperature"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp"
-                            android:text="@string/status_temperature_format"
-                            android:textSize="13sp" />
-                    </LinearLayout>
-
-                    <!-- 右：倒计时 -->
-                    <LinearLayout
+                    <TextView
+                        android:id="@+id/tvCaptureCount"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:gravity="center"
-                        android:minWidth="120dp"
-                        android:orientation="vertical">
+                        android:text="@string/status_count_format"
+                        android:textSize="13sp" />
 
-                        <TextView
-                            android:id="@+id/tvCountdown"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="--:--:--"
-                            android:textSize="36sp"
-                            android:textStyle="bold" />
+                    <TextView
+                        android:id="@+id/tvBattery"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="@string/status_battery_format"
+                        android:textSize="13sp" />
 
-                        <TextView
-                            android:id="@+id/tvCountdownLabel"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="2dp"
-                            android:text="@string/status_next_capture"
-                            android:textSize="12sp" />
-                    </LinearLayout>
+                    <TextView
+                        android:id="@+id/tvStorage"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="@string/status_storage_format"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:id="@+id/tvTemperature"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="@string/status_temperature_format"
+                        android:textSize="13sp" />
                 </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- 控制按钮（第二行：信息栏下方、照片上方） -->
+        <!-- 控制按钮 -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnToggle"
             android:layout_width="match_parent"
