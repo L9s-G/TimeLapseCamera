@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import com.timelapse.camera.service.CaptureService
+import com.timelapse.camera.util.LogBuffer
 
 /**
  * 闹钟备份接收器 —— AlarmManager 备份闹钟到期时触发，重启拍摄服务。
@@ -36,6 +37,9 @@ class CaptureReceiver : BroadcastReceiver() {
             // Android 12+ 后台 FGS 启动限制：setExactAndAllowWhileIdle 触发的广播
             // 不在豁免列表内，App 处于后台时 startForegroundService 会抛
             // ForegroundServiceStartNotAllowedException。兜底：5 秒后再试一次
+            // 最终依赖 WatchdogService 的 60s 检查周期恢复
+            LogBuffer.log(LogBuffer.ID_SCHEDULER, "W", "CaptureReceiver",
+                "后台启动 FGS 失败: ${e.javaClass.simpleName}: ${e.message}")
             CaptureScheduler.get(context).scheduleNext(5)
         }
     }
