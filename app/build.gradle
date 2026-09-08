@@ -60,4 +60,7 @@ dependencies {
 
     // Coil: 相册缩略图加载（Kotlin-first，比 Glide 更简洁）
     implementation 'io.coil-kt:coil:2.5.0'
+
+    // SAF 目录选择器：导出日志到用户指定位置
+    implementation 'androidx.documentfile:documentfile:1.0.1'
 }

@@ -37,7 +37,8 @@ import java.util.Locale
  * - SimpleDateFormat 非线程安全，每次局部创建实例使用
  *
  * 导出：
- * - exportLogs(identity) 将日志复制到公共缓存区，返回可分享/读取的临时文件
+ * - StatusFragment 通过 getFile(identity) 拿到日志磁盘文件路径，
+ *   用 SAF 目录选择器把 main/scheduler/watchdog 三个日志写入用户指定目录
  */
 object LogBuffer {
 
@@ -106,6 +107,44 @@ object LogBuffer {
     }
 
     /**
+     * 获取指定身份的日志磁盘文件路径。
+     * 确保 autoInit 已执行，即使本进程从未 log() 过该身份也能拿到路径。
+     * 用于跨进程导出场景。
+     */
+    fun getFile(identity: String): File? = synchronized(lock) {
+        autoInitIfNeededLocked(identity)
+        states[identity]?.file
+    }
+
+    /**
+     * 强制从磁盘刷新指定身份的内存 buffer（最近 MAX_SIZE 行）。
+     *
+     * 跨进程场景：watchdog 进程的 log() 写入 log_watchdog.txt，
+     * 主进程的内存 buffer 不会自动感知。调用此方法后，
+     * getFormattedLogs(identity) 即可返回最新内容。
+     *
+     * 设计：只在用户主动操作（切 Tab、点刷新）时调用，避免高频磁盘 IO。
+     * 文件不存在或为空时 buffer 保持不变（或清空为无内容状态）。
+     */
+    fun refillBuffer(identity: String) {
+        synchronized(lock) {
+            autoInitIfNeededLocked(identity)
+            val state = states[identity] ?: return
+            val file = state.file ?: return
+            if (!file.exists()) {
+                state.buffer.clear()
+                return
+            }
+            runCatching {
+                file.readLines().takeLast(MAX_SIZE).let { lines ->
+                    state.buffer.clear()
+                    state.buffer.addAll(lines)
+                }
+            }
+        }
+    }
+
+    /**
      * 读取指定身份的格式化日志字符串。
      * 用于 StatusFragment 展示（每秒刷新）。
      *
@@ -116,23 +155,6 @@ object LogBuffer {
         states[identity]?.buffer?.let { buf ->
             if (buf.isEmpty()) "" else buf.joinToString("\n")
         } ?: ""
-    }
-
-    /**
-     * 将指定身份的日志文件复制到外部缓存目录，返回可分享/读取的临时文件。
-     * 未初始化的身份返回 null。
-     */
-    fun exportLogs(identity: String): File? = synchronized(lock) {
-        val state = states[identity] ?: return null
-        val file = state.file ?: return null
-        val ctx = appContext ?: return null
-        val outDir = File(ctx.externalCacheDir ?: ctx.cacheDir, "exports")
-        outDir.mkdirs()
-        val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-        val outFile = File(outDir, "log_${identity}_$ts.txt")
-        runCatching {
-            file.copyTo(outFile, overwrite = true)
-        }.getOrNull()
     }
 
     /**

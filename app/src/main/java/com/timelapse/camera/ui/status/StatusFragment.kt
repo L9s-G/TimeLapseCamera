@@ -11,11 +11,10 @@ import android.view.ViewGroup
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
-import androidx.core.content.FileProvider
+import androidx.documentfile.provider.DocumentFile
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.tabs.TabLayout
-import com.timelapse.camera.BuildConfig
 import com.timelapse.camera.R
 import com.timelapse.camera.config.CaptureConfig
 import com.timelapse.camera.databinding.FragmentStatusBinding
@@ -29,6 +28,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * 状态页 Fragment —— 默认首页。
@@ -36,8 +38,8 @@ import kotlinx.coroutines.withContext
  * 核心信息：
  * - 运行状态 + 统计（拍摄数量、电量、存储、温度）
  * - 开始/停止按钮
- * - 三 Tab 日志：主日志 / 调度日志 / 守护日志（实时滚动更新，不自动滚底）
- * - 一键导出当前 Tab 的日志文件
+ * - 三 Tab 日志：主日志 / 调度日志 / 守护日志（切 Tab 时 refillBuffer 从磁盘刷新跨进程日志）
+ * - 一键导出：SAF 目录选择器，把 main/scheduler/watchdog 三个日志文件写入用户指定目录
  *
  * 设计要点：
  * - 进入页面时加载一次完整状态，后续每3秒刷新全部信息
@@ -68,6 +70,15 @@ class StatusFragment : Fragment() {
             startCapture()
         } else {
             Toast.makeText(requireContext(), R.string.perm_camera_denied, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** 导出日志：SAF 目录选择器，返回用户选中的 tree Uri */
+    private val exportTreeLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { treeUri ->
+        if (treeUri != null) {
+            exportLogsToTree(treeUri)
         }
     }
 
@@ -121,11 +132,18 @@ class StatusFragment : Fragment() {
         tabLayout.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
             override fun onTabSelected(tab: TabLayout.Tab) {
                 currentLogIdentity = identities[tab.position].first
+                // 切 Tab 时从磁盘刷新，保证跨进程身份的日志可见
+                LogBuffer.refillBuffer(currentLogIdentity)
                 binding.tvLog.text = LogBuffer.getFormattedLogs(currentLogIdentity)
                     .ifEmpty { getString(R.string.status_log_empty) }
             }
             override fun onTabUnselected(tab: TabLayout.Tab) = Unit
-            override fun onTabReselected(tab: TabLayout.Tab) = Unit
+            override fun onTabReselected(tab: TabLayout.Tab) {
+                // 重新选中同一 Tab 也刷新一次，方便用户手动拉取最新日志
+                LogBuffer.refillBuffer(currentLogIdentity)
+                binding.tvLog.text = LogBuffer.getFormattedLogs(currentLogIdentity)
+                    .ifEmpty { getString(R.string.status_log_empty) }
+            }
         })
     }
 
@@ -138,25 +156,48 @@ class StatusFragment : Fragment() {
         storage = PhotoStorageFactory.create(requireContext(), config)
     }
 
+    /** 点击导出按钮：弹出 SAF 目录选择器，把三个身份的日志文件写入所选目录 */
     private fun exportCurrentLog() {
+        exportTreeLauncher.launch(null)
+    }
+
+    /**
+     * 将 main / scheduler / watchdog 三个身份的日志磁盘文件
+     * 写入用户通过 OpenDocumentTree 选择的目录。
+     *
+     * 文件名格式：log_<identity>_yyyyMMdd_HHmmss.txt（带时间戳，每次导出不覆盖历史）
+     */
+    private fun exportLogsToTree(treeUri: Uri) {
         val ctx = requireContext()
-        val identity = currentLogIdentity
-        val exported = LogBuffer.exportLogs(identity)
-        if (exported == null) {
-            Toast.makeText(ctx, R.string.status_log_export_empty, Toast.LENGTH_SHORT).show()
+        val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+        val targetRoot = DocumentFile.fromTreeUri(ctx, treeUri) ?: run {
+            Toast.makeText(ctx, R.string.status_log_export_failed, Toast.LENGTH_SHORT).show()
             return
         }
-        val uri: Uri = FileProvider.getUriForFile(
-            ctx,
-            "${BuildConfig.APPLICATION_ID}.fileprovider",
-            exported
-        )
-        val share = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_STREAM, uri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        val identities = listOf(LogBuffer.ID_MAIN, LogBuffer.ID_SCHEDULER, LogBuffer.ID_WATCHDOG)
+        var exported = 0
+        for (identity in identities) {
+            val sourceFile = LogBuffer.getFile(identity) ?: continue
+            if (!sourceFile.exists() || sourceFile.length() == 0L) continue
+            val docName = "log_${identity}_$ts.txt"
+            // 同一次导出的 3 个文件名唯一（ts 相同、identity 不同），无需查找已存在文件；
+            // 目录里可能有历史导出残留，但本组新文件不会冲突。直接 createFile。
+            val targetDoc: DocumentFile? = targetRoot.createFile("text/plain", docName)
+            if (targetDoc == null) continue
+            val ok = runCatching {
+                val out = ctx.contentResolver.openOutputStream(targetDoc.uri) ?: return@runCatching false
+                out.use { outputStream ->
+                    sourceFile.inputStream().use { input -> input.copyTo(outputStream) }
+                }
+                true
+            }.getOrDefault(false)
+            if (ok) exported++
         }
-        startActivity(Intent.createChooser(share, getString(R.string.status_log_export_title)))
+        if (exported > 0) {
+            Toast.makeText(ctx, getString(R.string.status_log_export_success, exported), Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(ctx, R.string.status_log_export_empty, Toast.LENGTH_SHORT).show()
+        }
     }
 
     // ──────────── 主页状态刷新 ────────────

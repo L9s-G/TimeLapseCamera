@@ -28,9 +28,10 @@
     <string name="tab_log_main">主日志</string>
     <string name="tab_log_scheduler">调度</string>
     <string name="tab_log_watchdog">守护</string>
-    <string name="btn_export_log">导出</string>
-    <string name="status_log_export_title">分享日志</string>
-    <string name="status_log_export_empty">当前日志为空，无需导出</string>
+    <string name="btn_export_log">导出日志</string>
+    <string name="status_log_export_empty">无日志可导出</string>
+    <string name="status_log_export_success">已导出 %1$d 个日志文件</string>
+    <string name="status_log_export_failed">导出失败，请重试</string>
 
     <!-- 控制按钮 -->
     <string name="btn_start">开始拍摄</string>
