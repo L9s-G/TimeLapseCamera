@@ -7,6 +7,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.SystemClock
 import com.timelapse.camera.util.LogBuffer
+import com.timelapse.camera.util.TimeUtils
 
 /**
  * 拍摄调度器 —— 基于 AlarmManager 的精确定时唤醒。
@@ -86,7 +87,7 @@ class CaptureScheduler private constructor(private val context: Context) {
             LogBuffer.log(LogBuffer.ID_SCHEDULER, "W", TAG, "精确闹钟被拒绝，退化为非精确闹钟: ${e.message}")
         }
 
-        LogBuffer.log(LogBuffer.ID_SCHEDULER, "I", TAG, "已安排下次拍摄：${delaySeconds}秒后（elapsedRealtime=${triggerAt}ms）")
+        LogBuffer.log(LogBuffer.ID_SCHEDULER, "I", TAG, "已安排下次拍摄：${delaySeconds}秒后（预计触发 ≈ ${TimeUtils.formatElapsedRealtime(triggerAt)}）")
     }
 
     /**

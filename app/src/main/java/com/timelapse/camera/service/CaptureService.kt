@@ -25,6 +25,7 @@ import com.timelapse.camera.scheduler.CaptureScheduler
 import com.timelapse.camera.storage.IPhotoStorage
 import com.timelapse.camera.storage.PhotoStorageFactory
 import com.timelapse.camera.util.LogBuffer
+import com.timelapse.camera.util.TimeUtils
 import com.timelapse.camera.util.WatermarkPipeline
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -119,7 +120,7 @@ class CaptureService : Service() {
                 }
                 // 区分启动来源：lastCaptureTime==0 说明是闹钟/Watchdog 唤醒后的重启，否则是正常启动
                 val restartSource = if (config.lastCaptureTime == 0L) "闹钟重启" else "正常启动"
-                LogBuffer.log(LogBuffer.ID_MAIN, "I", TAG, "服务启动 [来源=$restartSource]，间隔 ${config.intervalSeconds}s，唤醒时间=${SystemClock.elapsedRealtime()}")
+                LogBuffer.log(LogBuffer.ID_MAIN, "I", TAG, "服务启动 [来源=$restartSource]，间隔 ${config.intervalSeconds}s")
                 val initialDelay = if (config.lastRemoteInterval > 0)
                     config.lastRemoteInterval else config.intervalSeconds
                 // Android 12+ 后台启动前台服务 / Android 14 camera type 缺 CAMERA 权限时
@@ -233,7 +234,7 @@ class CaptureService : Service() {
                             val newCount = config.captureCount + 1
                             CaptureConfig.updateCaptureProgress(applicationContext, newCount, timestamp)
                             config = config.copy(captureCount = newCount, lastCaptureTime = timestamp)
-                            LogBuffer.log(LogBuffer.ID_MAIN, "I", TAG, "拍摄完成 #$newCount，下次唤醒=$triggerAt")
+                            LogBuffer.log(LogBuffer.ID_MAIN, "I", TAG, "拍摄完成 #$newCount，下次唤醒 ≈ ${TimeUtils.formatElapsedRealtime(triggerAt)}")
                         } else {
                             LogBuffer.log(LogBuffer.ID_MAIN, "W", TAG, "拍摄失败，已保存黑图占位")
                         }
@@ -245,10 +246,12 @@ class CaptureService : Service() {
                 }
 
                 // ── 3. 更新倒计时通知（系统自动渲染，零功耗）──
-                updateNotification((triggerAt - SystemClock.elapsedRealtime()).toInt().coerceAtLeast(1))
+                // updateNotification 期望秒；triggerAt 是 ms 时间戳，差值是 ms，需除以 1000 转秒
+                updateNotification(((triggerAt - SystemClock.elapsedRealtime()) / 1000).toInt().coerceAtLeast(1))
 
                 // ── 4. AlarmManager 备份：服务被杀后闹钟重启 ──
-                CaptureScheduler.get(this).scheduleNext((triggerAt - SystemClock.elapsedRealtime()).toInt().coerceAtLeast(1))
+                // scheduleNext 参数单位为秒，同理需要除以 1000
+                CaptureScheduler.get(this).scheduleNext(((triggerAt - SystemClock.elapsedRealtime()) / 1000).toInt().coerceAtLeast(1))
 
                 // ── 5. 协程等待（主调度，WakeLock 全程持有防息屏秒睡）──
                 delay(maxOf(0L, triggerAt - SystemClock.elapsedRealtime()))
