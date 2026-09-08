@@ -183,18 +183,13 @@ class CaptureService : Service() {
                     safeLineGb = config.storageSafeLineGb
                 )
 
-                // ── 1. 远程配置：拉取下次拍摄延迟 ──
-                var nextDelay = config.intervalSeconds
+                // ── 1. 远程配置：拉取下次拍摄间隔，写入 prefs 供服务重启/闹钟恢复使用 ──
                 if (!config.remoteConfigUrl.isNullOrBlank()) {
                     val remoteDelay = remoteConfigFetcher.fetchNextInterval(config.remoteConfigUrl!!)
                     if (remoteDelay != null) {
-                        nextDelay = remoteDelay
                         LogBuffer.log(LogBuffer.ID_MAIN, "I", TAG, "远程配置: 间隔=${remoteDelay}s")
                         // 局部更新：只写远程间隔的 key，避免全量 save 覆盖用户刚改的其他配置
                         CaptureConfig.updateRemoteInterval(applicationContext, remoteDelay)
-                        config = config.copy(lastRemoteInterval = remoteDelay)
-                    } else if (config.lastRemoteInterval > 0) {
-                        nextDelay = config.lastRemoteInterval
                     }
                 }
 
