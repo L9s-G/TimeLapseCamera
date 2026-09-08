@@ -185,7 +185,7 @@ class PreviewFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             try {
                 // ── 1. 释放预览（主线程，持锁防止打断拍摄服务）──
-                LogBuffer.log(LogBuffer.ID_MAIN, "I", TAG, "试拍开始，释放预览")
+                LogBuffer.log("I", TAG, "试拍开始，释放预览")
                 CameraMutex.withLock { cameraProvider?.unbindAll() }
 
                 // ── 2. 拍摄（主线程，CameraX 操作必须在主线程）──
@@ -195,7 +195,7 @@ class PreviewFragment : Fragment() {
                     config.shotRotation
                 )
                 val result = camera.capture()
-                LogBuffer.log(LogBuffer.ID_MAIN, "I", TAG,
+                LogBuffer.log("I", TAG,
                     "拍摄完成: ${if (result is CaptureResult.Success) "成功" else "失败"}")
 
                 // ── 3. 水印处理（统一调用 WatermarkPipeline）──
@@ -212,10 +212,10 @@ class PreviewFragment : Fragment() {
                 val savedPath = watermarkedBitmap?.let {
                     storage.saveTestPhoto(it)
                 } ?: run {
-                    LogBuffer.log(LogBuffer.ID_MAIN, "E", TAG, "水印处理失败，无法保存")
+                    LogBuffer.log("E", TAG, "水印处理失败，无法保存")
                     return@launch
                 }
-                LogBuffer.log(LogBuffer.ID_MAIN, "I", TAG, "保存完成: $savedPath")
+                LogBuffer.log("I", TAG, "保存完成: $savedPath")
 
                 // ── 4. 重新绑定预览 + 显示结果（主线程）──
                 // 注意：先 load() 再 recycle() 不是必须顺序——
@@ -236,9 +236,9 @@ class PreviewFragment : Fragment() {
                 } else {
                     getString(R.string.preview_test_fail)
                 }
-                LogBuffer.log(LogBuffer.ID_MAIN, "I", TAG, "试拍流程全部完成")
+                LogBuffer.log("I", TAG, "试拍流程全部完成")
             } catch (e: Throwable) {
-                LogBuffer.log(LogBuffer.ID_MAIN, "E", TAG, "试拍异常: ${e.javaClass.simpleName}: ${e.message}")
+                LogBuffer.log("E", TAG, "试拍异常: ${e.javaClass.simpleName}: ${e.message}")
 
                 val b = _binding
                 if (b != null) {

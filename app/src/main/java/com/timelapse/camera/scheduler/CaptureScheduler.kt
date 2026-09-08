@@ -60,7 +60,7 @@ class CaptureScheduler private constructor(private val context: Context) {
         val triggerAt = SystemClock.elapsedRealtime() + delaySeconds * 1000L
         val pendingIntent = buildPendingIntent()
         if (pendingIntent == null) {
-            LogBuffer.log(LogBuffer.ID_SCHEDULER, "E", TAG, "创建 PendingIntent 失败，无法安排拍摄")
+            LogBuffer.log("E", TAG, "创建 PendingIntent 失败，无法安排拍摄")
             return
         }
 
@@ -73,7 +73,7 @@ class CaptureScheduler private constructor(private val context: Context) {
                 alarmManager.setAndAllowWhileIdle(
                     AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, pendingIntent
                 )
-                LogBuffer.log(LogBuffer.ID_SCHEDULER, "W", TAG, "精确闹钟权限未授予，退化为非精确闹钟")
+                LogBuffer.log("W", TAG, "精确闹钟权限未授予，退化为非精确闹钟")
             } else {
                 alarmManager.setExactAndAllowWhileIdle(
                     AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, pendingIntent
@@ -84,10 +84,10 @@ class CaptureScheduler private constructor(private val context: Context) {
             alarmManager.setAndAllowWhileIdle(
                 AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, pendingIntent
             )
-            LogBuffer.log(LogBuffer.ID_SCHEDULER, "W", TAG, "精确闹钟被拒绝，退化为非精确闹钟: ${e.message}")
+            LogBuffer.log("W", TAG, "精确闹钟被拒绝，退化为非精确闹钟: ${e.message}")
         }
 
-        LogBuffer.log(LogBuffer.ID_SCHEDULER, "I", TAG, "已安排下次拍摄：${delaySeconds}秒后（预计触发 ≈ ${TimeUtils.formatElapsedRealtime(triggerAt)}）")
+        LogBuffer.log("I", TAG, "已安排下次拍摄：${delaySeconds}秒后（预计触发 ≈ ${TimeUtils.formatElapsedRealtime(triggerAt)}）")
     }
 
     /**
@@ -97,7 +97,7 @@ class CaptureScheduler private constructor(private val context: Context) {
     fun cancel() {
         val pendingIntent = buildPendingIntent(PendingIntent.FLAG_NO_CREATE)
         pendingIntent?.let { alarmManager.cancel(it) }
-        LogBuffer.log(LogBuffer.ID_SCHEDULER, "I", TAG, "已取消拍摄计划")
+        LogBuffer.log("I", TAG, "已取消拍摄计划")
     }
 
     private fun buildPendingIntent(flags: Int = PendingIntent.FLAG_UPDATE_CURRENT): PendingIntent? {

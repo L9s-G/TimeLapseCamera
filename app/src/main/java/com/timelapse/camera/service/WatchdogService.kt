@@ -56,7 +56,7 @@ class WatchdogService : Service() {
         startForeground(NOTIFICATION_ID, buildNotification())
         acquireWakeLock()
         startCheckLoop()
-        LogBuffer.log(LogBuffer.ID_WATCHDOG, "I", TAG, "守护服务启动")
+        LogBuffer.log("I", TAG, "守护服务启动")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -78,7 +78,7 @@ class WatchdogService : Service() {
                     val config = CaptureConfig.load(this@WatchdogService)
                     if (config.isRunning) {
                         idleRounds = 0
-                        LogBuffer.log(LogBuffer.ID_WATCHDOG, "W", TAG, "主服务进程未运行，Watchdog 触发重启闹钟")
+                        LogBuffer.log("W", TAG, "主服务进程未运行，Watchdog 触发重启闹钟")
                         // 设一个 5 秒后的闹钟，触发 CaptureReceiver → 重启主服务
                         CaptureScheduler.get(this@WatchdogService).scheduleNext(5)
                     } else {
@@ -86,7 +86,7 @@ class WatchdogService : Service() {
                         idleRounds++
 
                         if (idleRounds >= IDLE_EXIT_ROUNDS) {
-                            LogBuffer.log(LogBuffer.ID_WATCHDOG, "I", TAG, "连续 $IDLE_EXIT_ROUNDS 轮无拍摄任务，守护服务自行退出")
+                            LogBuffer.log("I", TAG, "连续 $IDLE_EXIT_ROUNDS 轮无拍摄任务，守护服务自行退出")
                             stopSelf()
                             break
                         }
@@ -149,9 +149,9 @@ class WatchdogService : Service() {
         val config = CaptureConfig.load(applicationContext)
         if (config.isRunning) {
             CaptureScheduler.get(this).scheduleNext(60)
-            LogBuffer.log(LogBuffer.ID_WATCHDOG, "I", TAG, "检测拍摄中，注册闹钟60秒后自我唤醒")
+            LogBuffer.log("I", TAG, "检测拍摄中，注册闹钟60秒后自我唤醒")
         } else {
-            LogBuffer.log(LogBuffer.ID_WATCHDOG, "I", TAG, "已停止拍摄，不恢复守护")
+            LogBuffer.log("I", TAG, "已停止拍摄，不恢复守护")
         }
         releaseWakeLock()
         serviceScope.cancel()

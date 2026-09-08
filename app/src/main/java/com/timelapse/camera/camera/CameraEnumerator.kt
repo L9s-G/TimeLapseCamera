@@ -73,9 +73,9 @@ object CameraEnumerator {
 
                 val info = CameraInfo(id, facing, facingName, sensorSize, focalLengths)
                 result.add(info)
-                LogBuffer.log(LogBuffer.ID_MAIN, "I", TAG, "[$id] $facingName | ${info.megapixels} | 传感器: ${sensorSize?.let { "${it.width}x${it.height}" } ?: "未知"} | 焦距: ${info.focalLengthText}")
+                LogBuffer.log("I", TAG, "[$id] $facingName | ${info.megapixels} | 传感器: ${sensorSize?.let { "${it.width}x${it.height}" } ?: "未知"} | 焦距: ${info.focalLengthText}")
             }.onFailure { e ->
-                LogBuffer.log(LogBuffer.ID_MAIN, "E", TAG, "读取摄像头 $id 失败: ${e.message}")
+                LogBuffer.log("E", TAG, "读取摄像头 $id 失败: ${e.message}")
             }
         }
 
