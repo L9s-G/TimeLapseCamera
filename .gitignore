@@ -43,3 +43,6 @@ captures/
 
 # Agnes-Code
 .agnes/
+
+# Claude Code (local harness state)
+.claude/
