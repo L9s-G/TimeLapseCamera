@@ -42,7 +42,7 @@ jobs:
       uses: actions/upload-artifact@v6
       with:
         name: timelapse-camera-debug
-        path: app/build/outputs/apk/debug/app-debug.apk
+        path: app/build/outputs/apk/debug/TimeLapseCamera-debug-*.apk
         retention-days: 30
 
     - name: Build Release APK (manual only)
@@ -59,7 +59,7 @@ jobs:
       uses: actions/upload-artifact@v6
       with:
         name: timelapse-camera-release
-        path: app/build/outputs/apk/release/app-release.apk
+        path: app/build/outputs/apk/release/TimeLapseCamera-v*.apk
         retention-days: 30
 
   release:
@@ -77,5 +77,5 @@ jobs:
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v3
       with:
-        files: artifact/app-release.apk
+        files: artifact/TimeLapseCamera-v*.apk
         generate_release_notes: true
