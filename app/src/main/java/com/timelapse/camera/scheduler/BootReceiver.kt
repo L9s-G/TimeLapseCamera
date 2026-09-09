@@ -3,7 +3,7 @@ package com.timelapse.camera.scheduler
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import com.timelapse.camera.config.CaptureConfig
+import com.timelapse.camera.config.RuntimeState
 import com.timelapse.camera.service.WatchdogService
 
 /**
@@ -26,8 +26,8 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent?.action != Intent.ACTION_BOOT_COMPLETED) return
 
-        val config = CaptureConfig.load(context)
-        if (!config.isRunning) return
+        val runtime = RuntimeState.load(context)
+        if (!runtime.isRunning) return
 
         // 只启动 WatchdogService：它检测主服务状态后自行决定是否需要闹钟唤醒 CaptureService
         context.startService(Intent(context, WatchdogService::class.java))

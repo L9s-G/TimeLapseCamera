@@ -11,7 +11,7 @@ import android.os.IBinder
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import com.timelapse.camera.R
-import com.timelapse.camera.config.CaptureConfig
+import com.timelapse.camera.config.RuntimeState
 import com.timelapse.camera.scheduler.CaptureScheduler
 import com.timelapse.camera.util.LogBuffer
 import kotlinx.coroutines.CoroutineScope
@@ -75,8 +75,8 @@ class WatchdogService : Service() {
                 delay(CHECK_INTERVAL_MS)
                 if (!isMainServiceRunning()) {
                     // 只有用户在设置中开启了拍摄（isRunning=true），才需要重启
-                    val config = CaptureConfig.load(this@WatchdogService)
-                    if (config.isRunning) {
+                    val runtime = RuntimeState.load(this@WatchdogService)
+                    if (runtime.isRunning) {
                         idleRounds = 0
                         LogBuffer.log("W", TAG, "主服务进程未运行，Watchdog 触发重启闹钟")
                         // 设一个 5 秒后的闹钟，触发 CaptureReceiver → 重启主服务
@@ -146,8 +146,8 @@ class WatchdogService : Service() {
         checkJob?.cancel()
         // 【自我保护】只有用户仍在拍摄时才重新注册闹钟唤醒自己
         // isRunning=false 表示用户主动停止，无需恢复
-        val config = CaptureConfig.load(applicationContext)
-        if (config.isRunning) {
+        val runtime = RuntimeState.load(applicationContext)
+        if (runtime.isRunning) {
             CaptureScheduler.get(this).scheduleNext(60)
             LogBuffer.log("I", TAG, "检测拍摄中，注册闹钟60秒后自我唤醒")
         } else {

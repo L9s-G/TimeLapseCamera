@@ -17,6 +17,7 @@ import androidx.lifecycle.lifecycleScope
 import com.google.android.material.tabs.TabLayout
 import com.timelapse.camera.R
 import com.timelapse.camera.config.CaptureConfig
+import com.timelapse.camera.config.RuntimeState
 import com.timelapse.camera.databinding.FragmentStatusBinding
 import com.timelapse.camera.service.CaptureService
 import com.timelapse.camera.storage.IPhotoStorage
@@ -59,6 +60,7 @@ class StatusFragment : Fragment() {
     private val binding get() = _binding!!
 
     private lateinit var config: CaptureConfig
+    private lateinit var runtime: RuntimeState
     private lateinit var storage: IPhotoStorage
 
     private var refreshJob: Job? = null
@@ -101,6 +103,7 @@ class StatusFragment : Fragment() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         config = CaptureConfig.load(requireContext())
+        runtime = RuntimeState.load(requireContext())
         storage = PhotoStorageFactory.create(requireContext(), config)
     }
 
@@ -240,6 +243,7 @@ class StatusFragment : Fragment() {
      */
     private fun reloadFromDisk() {
         config = CaptureConfig.load(requireContext())
+        runtime = RuntimeState.load(requireContext())
         storage = PhotoStorageFactory.create(requireContext(), config)
     }
 
@@ -300,18 +304,19 @@ class StatusFragment : Fragment() {
                 delay(3000)
                 val snapshot = withContext(Dispatchers.IO) {
                     val curConfig = CaptureConfig.load(requireContext())
+                    val curRuntime = RuntimeState.load(requireContext())
                     val curStorage = PhotoStorageFactory.create(requireContext(), curConfig)
                     RefreshSnapshot(
-                        config = curConfig,
+                        runtime = curRuntime,
                         battery = BatteryMonitor.getBatteryPercent(requireContext()),
                         storageGb = BatteryMonitor.getStorageRemainingGb(curStorage.getPhotoDir()),
                         temp = BatteryMonitor.getBatteryTemperature(requireContext())
                     )
                 }
                 val b = _binding ?: return@launch
-                val curConfig = snapshot.config
+                val curRuntime = snapshot.runtime
 
-                val isRunning = curConfig.isRunning
+                val isRunning = curRuntime.isRunning
                 b.tvStatus.text = if (isRunning) getString(R.string.status_running)
                 else getString(R.string.status_stopped)
                 b.tvStatus.setTextColor(
@@ -321,7 +326,7 @@ class StatusFragment : Fragment() {
                 b.btnToggle.text = if (isRunning) getString(R.string.btn_stop)
                 else getString(R.string.btn_start)
 
-                b.tvCaptureCount.text = getString(R.string.status_count_format, curConfig.captureCount)
+                b.tvCaptureCount.text = getString(R.string.status_count_format, curRuntime.captureCount)
                 b.tvBattery.text = getString(R.string.status_battery_format, snapshot.battery)
                 b.tvStorage.text = getString(R.string.status_storage_format, snapshot.storageGb)
                 b.tvTemperature.text = getString(R.string.status_temperature_format, snapshot.temp)
@@ -337,7 +342,7 @@ class StatusFragment : Fragment() {
     }
 
     private data class RefreshSnapshot(
-        val config: CaptureConfig,
+        val runtime: RuntimeState,
         val battery: Int,
         val storageGb: Float,
         val temp: Float
@@ -351,7 +356,7 @@ class StatusFragment : Fragment() {
     // ──────────── UI 更新（进入页面时加载一次）────────────
 
     private fun updateUI() {
-        val isRunning = config.isRunning
+        val isRunning = runtime.isRunning
 
         binding.tvStatus.text = if (isRunning) getString(R.string.status_running)
         else getString(R.string.status_stopped)
@@ -363,7 +368,7 @@ class StatusFragment : Fragment() {
         binding.btnToggle.text = if (isRunning) getString(R.string.btn_stop)
         else getString(R.string.btn_start)
 
-        binding.tvCaptureCount.text = getString(R.string.status_count_format, config.captureCount)
+        binding.tvCaptureCount.text = getString(R.string.status_count_format, runtime.captureCount)
 
         val battery = BatteryMonitor.getBatteryPercent(requireContext())
         val storageGb = BatteryMonitor.getStorageRemainingGb(storage.getPhotoDir())
@@ -383,7 +388,7 @@ class StatusFragment : Fragment() {
     // ──────────── 开始/停止 ────────────
 
     private fun toggleCapture() {
-        if (config.isRunning) {
+        if (runtime.isRunning) {
             stopCapture()
         } else if (hasCameraPermission()) {
             startCapture()
@@ -402,8 +407,8 @@ class StatusFragment : Fragment() {
         context.startForegroundService(Intent(context, CaptureService::class.java).apply {
             action = CaptureService.ACTION_START
         })
-        config = config.copy(isRunning = true)
-        config.save(context)
+        RuntimeState.updateRunning(context, true)
+        runtime = runtime.copy(isRunning = true)
         updateUI()
     }
 
@@ -412,8 +417,8 @@ class StatusFragment : Fragment() {
         context.startService(Intent(context, CaptureService::class.java).apply {
             action = CaptureService.ACTION_STOP
         })
-        config = config.copy(isRunning = false)
-        config.save(context)
+        RuntimeState.updateRunning(context, false)
+        runtime = runtime.copy(isRunning = false)
         updateUI()
     }
 

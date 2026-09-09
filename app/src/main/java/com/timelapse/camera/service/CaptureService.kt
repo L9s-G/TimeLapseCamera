@@ -20,6 +20,7 @@ import com.timelapse.camera.camera.CameraXController
 import com.timelapse.camera.camera.ICameraController
 import com.timelapse.camera.config.CaptureConfig
 import com.timelapse.camera.config.RemoteConfigFetcher
+import com.timelapse.camera.config.RuntimeState
 import com.timelapse.camera.model.CaptureResult
 import com.timelapse.camera.scheduler.CaptureScheduler
 import com.timelapse.camera.storage.IPhotoStorage
@@ -112,8 +113,9 @@ class CaptureService : Service() {
             else -> {
                 // ACTION_START 或 null（START_STICKY 恢复）
                 val config = CaptureConfig.load(applicationContext)
+                val runtime = RuntimeState.load(applicationContext)
                 // isRunning=false 表示用户已停止，主动清理并退出
-                if (!config.isRunning) {
+                if (!runtime.isRunning) {
                     LogBuffer.log("I", TAG, "检测到 isRunning=false，主动停止并清理")
                     CaptureScheduler.get(applicationContext).cancel()
                     stopService(Intent(applicationContext, WatchdogService::class.java))
@@ -121,10 +123,10 @@ class CaptureService : Service() {
                     return START_NOT_STICKY
                 }
                 // 区分启动来源：lastCaptureTime==0 说明是闹钟/Watchdog 唤醒后的重启，否则是正常启动
-                val restartSource = if (config.lastCaptureTime == 0L) "闹钟重启" else "正常启动"
+                val restartSource = if (runtime.lastCaptureTime == 0L) "闹钟重启" else "正常启动"
                 LogBuffer.log("I", TAG, "服务启动 [来源=$restartSource]，间隔 ${config.intervalSeconds}s")
-                val initialDelay = if (config.lastRemoteInterval > 0)
-                    config.lastRemoteInterval else config.intervalSeconds
+                val initialDelay = if (runtime.lastRemoteInterval > 0)
+                    runtime.lastRemoteInterval else config.intervalSeconds
                 // Android 12+ 后台启动前台服务 / Android 14 camera type 缺 CAMERA 权限时
                 // startForeground 会抛异常；闹钟重启场景 App 可能正处于后台，必须兜底
                 try {
@@ -172,9 +174,10 @@ class CaptureService : Service() {
                 // triggerAt 在循环一开始锁定，后续所有操作（remote config fetch、cleanup）都不影响它，
                 // 确保 alarm 对齐固定触发点，remote config 只在下一次循环生效。
                 var config = CaptureConfig.load(applicationContext)
+                var runtime = RuntimeState.load(applicationContext)
                 var triggerAt = SystemClock.elapsedRealtime() + config.intervalSeconds * 1000L
 
-                if (!config.isRunning) break
+                if (!runtime.isRunning) break
 
                 // ── 0. 检测存储位置是否变更，变更则重建 storage 实例 ──
                 storage = PhotoStorageFactory.create(applicationContext, config)
@@ -183,7 +186,7 @@ class CaptureService : Service() {
                 // isCleaning 跨轮保持：防止 20 张/轮顶回阈值上方后，续删任务被静默吞掉。
                 // 进入条件：isCleaning=true（续删）或 空间 < threshold（首次触发）
                 val remaining = BatteryMonitor.getStorageRemainingGb(storage.getPhotoDir())
-                val shouldClean = config.isCleaning || remaining < config.storageThresholdGb
+                val shouldClean = runtime.isCleaning || remaining < config.storageThresholdGb
                 if (shouldClean) {
                     val result = storage.cleanupOldPhotos(
                         safeLineGb = config.storageSafeLineGb,
@@ -191,14 +194,14 @@ class CaptureService : Service() {
                     )
                     // 防死循环：本轮 0 删除（权限/无文件）→ 强制释放 isCleaning
                     val nowCleaning = result.deleted > 0 && result.remainingGb < config.storageSafeLineGb
-                    if (nowCleaning != config.isCleaning) {
+                    if (nowCleaning != runtime.isCleaning) {
                         if (nowCleaning)
                             LogBuffer.log("I", "Storage",
                                 "FIFO开始[📀${String.format("%.1f", result.remainingGb)}G | ◐${config.storageThresholdGb} | ⬤${config.storageSafeLineGb} | 📷${storage.getPhotoCount()}]")
                         else
                             LogBuffer.log("I", "Storage",
                                 "FIFO结束[📀${String.format("%.1f", result.remainingGb)}G | ◐${config.storageThresholdGb} | ⬤${config.storageSafeLineGb} | 📷${storage.getPhotoCount()}]")
-                        CaptureConfig.updateCleaningState(applicationContext, nowCleaning)
+                        RuntimeState.updateCleaning(applicationContext, nowCleaning)
                     }
                 }
 
@@ -208,7 +211,7 @@ class CaptureService : Service() {
                     if (remoteDelay != null) {
                         LogBuffer.log("I", TAG, "远程配置: 间隔=${remoteDelay}s")
                         // 局部更新：只写远程间隔的 key，避免全量 save 覆盖用户刚改的其他配置
-                        CaptureConfig.updateRemoteInterval(applicationContext, remoteDelay)
+                        RuntimeState.updateRemoteInterval(applicationContext, remoteDelay)
                     }
                 }
 
@@ -245,9 +248,8 @@ class CaptureService : Service() {
                         if (result is CaptureResult.Success) {
                             // 局部更新：只写拍摄进度的 key，避免全量 save 覆盖用户刚改的其他配置。
                             // lastCaptureTime 在拍摄成功后才更新，下次启动时用于区分「闹钟重启」vs「正常启动」
-                            val newCount = config.captureCount + 1
-                            CaptureConfig.updateCaptureProgress(applicationContext, newCount, timestamp)
-                            config = config.copy(captureCount = newCount, lastCaptureTime = timestamp)
+                            val newCount = runtime.captureCount + 1
+                            RuntimeState.updateCaptureProgress(applicationContext, newCount, timestamp)
                             LogBuffer.log("I", TAG, "拍摄完成 #$newCount，下次唤醒 ≈ ${TimeUtils.formatElapsedRealtime(triggerAt)}")
                         } else {
                             LogBuffer.log("W", TAG, "拍摄失败，已保存黑图占位")

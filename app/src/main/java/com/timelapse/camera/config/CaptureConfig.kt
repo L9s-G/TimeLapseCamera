@@ -24,11 +24,15 @@ enum class StorageLocation {
 }
 
 /**
- * 拍摄配置 —— 所有可调参数集中在此，通过 SharedPreferences 持久化。
+ * 用户可编辑拍摄配置 —— 所有可调参数集中在此，通过 SharedPreferences 持久化。
+ *
+ * 写入者：仅 SettingsFragment（用户修改设置时调用 save()）。
+ * 运行时状态（isRunning / isCleaning / captureCount 等）已分离至 RuntimeState。
  *
  * 教学要点：
  * - 用 data class + copy() 实现不可变配置，避免运行期被意外修改
  * - 每个字段都有默认值，首次运行不会崩
+ * - save() 只写用户设置字段，不碰 runtime key，杜绝竞态
  */
 data class CaptureConfig(
     /** 拍摄间隔（秒），远程配置可动态覆盖此值 */
@@ -45,14 +49,6 @@ data class CaptureConfig(
     val watermarkShowTemperature: Boolean = true,
     /** 远程配置 URL，返回 15-3600 整数作为下次拍摄延迟，null 表示不使用远程配置 */
     val remoteConfigUrl: String? = null,
-    /** 拍摄是否正在运行 */
-    val isRunning: Boolean = false,
-    /** 已拍摄张数 */
-    val captureCount: Int = 0,
-    /** 上次有效远程间隔（远程失败时回退使用） */
-    val lastRemoteInterval: Int = 0,
-    /** 上次成功拍摄的时间戳，服务重启时用于判断启动来源 */
-    val lastCaptureTime: Long = 0,
     /** 照片存储位置 */
     val storageLocation: StorageLocation = StorageLocation.APP_PRIVATE,
     /**
@@ -64,9 +60,7 @@ data class CaptureConfig(
     /** FIFO 清理阈值（GB）：剩余空间低于此值时触发清理 */
     val storageThresholdGb: Float = 1.0f,
     /** FIFO 清理安全线（GB）：清理到此值停止 */
-    val storageSafeLineGb: Float = 2.0f,
-    /** FIFO 清理是否进行中（跨轮保持，防止阈值反弹后丢失续删任务） */
-    val isCleaning: Boolean = false
+    val storageSafeLineGb: Float = 2.0f
 ) {
     fun save(context: Context) {
         prefs(context).edit().apply {
@@ -77,15 +71,10 @@ data class CaptureConfig(
             putBoolean(KEY_WATERMARK_STORAGE, watermarkShowStorage)
             putBoolean(KEY_WATERMARK_TEMP, watermarkShowTemperature)
             putString(KEY_REMOTE_URL, remoteConfigUrl)
-            putBoolean(KEY_IS_RUNNING, isRunning)
-            putInt(KEY_CAPTURE_COUNT, captureCount)
-            putInt(KEY_LAST_REMOTE_INTERVAL, lastRemoteInterval)
-            putLong(KEY_LAST_CAPTURE_TIME, lastCaptureTime)
             putString(KEY_STORAGE_LOCATION, storageLocation.name)
             putInt(KEY_SHOT_ROTATION, shotRotation)
             putFloat(KEY_STORAGE_THRESHOLD, storageThresholdGb)
             putFloat(KEY_STORAGE_SAFE_LINE, storageSafeLineGb)
-            putBoolean(KEY_IS_CLEANING, isCleaning)
             apply()
         }
     }
@@ -99,15 +88,10 @@ data class CaptureConfig(
         private const val KEY_WATERMARK_STORAGE = "watermark_storage"
         private const val KEY_WATERMARK_TEMP = "watermark_temperature"
         private const val KEY_REMOTE_URL = "remote_config_url"
-        private const val KEY_IS_RUNNING = "is_running"
-        private const val KEY_CAPTURE_COUNT = "capture_count"
-        private const val KEY_LAST_REMOTE_INTERVAL = "last_remote_interval"
-        private const val KEY_LAST_CAPTURE_TIME = "last_capture_time"
         private const val KEY_STORAGE_LOCATION = "storage_location"
         private const val KEY_SHOT_ROTATION = "shot_rotation"
         private const val KEY_STORAGE_THRESHOLD = "storage_threshold_gb"
         private const val KEY_STORAGE_SAFE_LINE = "storage_safe_line_gb"
-        private const val KEY_IS_CLEANING = "is_cleaning"
 
         @Volatile private var prefsInstance: SharedPreferences? = null
 
@@ -127,50 +111,11 @@ data class CaptureConfig(
                 watermarkShowStorage = prefs.getBoolean(KEY_WATERMARK_STORAGE, true),
                 watermarkShowTemperature = prefs.getBoolean(KEY_WATERMARK_TEMP, true),
                 remoteConfigUrl = prefs.getString(KEY_REMOTE_URL, null),
-                isRunning = prefs.getBoolean(KEY_IS_RUNNING, false),
-                captureCount = prefs.getInt(KEY_CAPTURE_COUNT, 0),
-                lastRemoteInterval = prefs.getInt(KEY_LAST_REMOTE_INTERVAL, 0),
-                lastCaptureTime = prefs.getLong(KEY_LAST_CAPTURE_TIME, 0),
                 storageLocation = StorageLocation.fromName(prefs.getString(KEY_STORAGE_LOCATION, null)),
                 shotRotation = prefs.getInt(KEY_SHOT_ROTATION, Surface.ROTATION_90),
                 storageThresholdGb = prefs.getFloat(KEY_STORAGE_THRESHOLD, 1.0f),
-                storageSafeLineGb = prefs.getFloat(KEY_STORAGE_SAFE_LINE, 2.0f),
-                isCleaning = prefs.getBoolean(KEY_IS_CLEANING, false)
+                storageSafeLineGb = prefs.getFloat(KEY_STORAGE_SAFE_LINE, 2.0f)
             )
-        }
-
-        /**
-         * 局部更新拍摄进度（captureCount + lastCaptureTime）。
-         *
-         * 为什么不用 save() 全量保存？
-         * - captureLoop 拍摄耗时数秒，期间用户可能在设置页修改配置
-         * - 全量 save 会用拍摄开始时读到的旧配置覆盖用户刚保存的新值（丢失更新竞态）
-         * - 局部更新只写自己的 key，与设置页的写入互不干扰
-         */
-        fun updateCaptureProgress(context: Context, captureCount: Int, lastCaptureTime: Long) {
-            prefs(context).edit()
-                .putInt(KEY_CAPTURE_COUNT, captureCount)
-                .putLong(KEY_LAST_CAPTURE_TIME, lastCaptureTime)
-                .apply()
-        }
-
-        /**
-         * 局部更新远程配置下发的间隔值（避免全量 save 的丢失更新竞态）。
-         */
-        fun updateRemoteInterval(context: Context, remoteInterval: Int) {
-            prefs(context).edit()
-                .putInt(KEY_LAST_REMOTE_INTERVAL, remoteInterval)
-                .apply()
-        }
-
-        /**
-         * 局部更新 FIFO 清理状态（避免全量 save 的丢失更新竞态）。
-         * 跨轮保持：防止阈值反弹后丢失续删任务。
-         */
-        fun updateCleaningState(context: Context, isCleaning: Boolean) {
-            prefs(context).edit()
-                .putBoolean(KEY_IS_CLEANING, isCleaning)
-                .apply()
         }
     }
 }
