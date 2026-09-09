@@ -12,6 +12,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import com.timelapse.camera.camera.CameraEnumerator
 import com.timelapse.camera.config.CaptureConfig
+import com.timelapse.camera.config.RuntimeState
 import com.timelapse.camera.config.StorageLocation
 import com.timelapse.camera.databinding.FragmentSettingsBinding
 import com.timelapse.camera.storage.PhotoStorageFactory
@@ -380,8 +381,10 @@ class SettingsFragment : Fragment() {
 
             if (result != null) {
                 // 验证成功，保存
-                config = config.copy(remoteConfigUrl = url, lastRemoteInterval = result)
+                // remoteConfigUrl 是用户设置 → 走 config；lastRemoteInterval 是运行时状态 → 走 RuntimeState
+                config = config.copy(remoteConfigUrl = url)
                 config.save(requireContext())
+                RuntimeState.updateRemoteInterval(requireContext(), result)
                 Toast.makeText(
                     requireContext(),
                     getString(R.string.validation_url_verified, result),
