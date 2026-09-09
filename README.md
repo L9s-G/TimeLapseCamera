@@ -1,6 +1,6 @@
 # 延时相机 (TimeLapseCamera)
 
-> **版本**：v1.0.7 | **最低 API**：26 (Android 8.0) | **目标 API**：34 (Android 14)
+> **版本**：v1.0.8 | **最低 API**：26 (Android 8.0) | **目标 API**：34 (Android 14)
 
 旧手机变身延时拍摄设备 —— 长期定期拍照，记录植物生长或城市发展。
 
@@ -14,6 +14,7 @@
 - **丰富水印**：时间戳 + 自定义文字 + 电量/存储/温度（可开关）
 - **失败回退**：镜头自动切换 + 黑图占位 + 写入不崩溃 + 进程被杀恢复
 - **远程配置下发**：通过 URL 动态调整拍摄间隔（URL 格式校验 + 实际抓取验证）
+- **FIFO 存储清理**：磁盘低于阈值时按最旧月份自动删旧照，删到安全线为止；`isCleaning` 跨轮保持，空间顶回阈值上方也不丢续删任务，单轮 0 删除自动复位防死循环
 - **模块插拔设计**：相机、存储、配置均可独立替换，适合教学
 - **自动化日志体系（LogBuffer）**：双进程日志（main/watchdog），常驻裸 append 流无需 flush，状态页两 Tab 切换查看，SAF 目录一键导出
 
@@ -126,7 +127,8 @@ app/src/main/java/com/timelapse/camera/
 │   └── settings/SettingsFragment.kt #  设置页：参数 + 权限状态
 │
 ├── config/                       # ── 配置模块 ──
-│   ├── CaptureConfig.kt          #   拍摄配置 (data class + SharedPreferences 持久化)
+│   ├── CaptureConfig.kt          #   用户可编辑配置 (data class + SharedPreferences)
+│   ├── RuntimeState.kt           #   运行时状态 (isRunning/isCleaning/captureCount 等，局部更新防竞态)
 │   └── RemoteConfigFetcher.kt    #   远程配置拉取 (URL → 返回秒数 15~3600)
 │
 ├── camera/                       # ── 相机模块 ──
@@ -760,7 +762,7 @@ TimeLapse/
 
 | 方向 | 实现方式 |
 |------|---------|
-| 自动清理旧照片 | 新增 `FifoPhotoStorage` 实现 `IPhotoStorage` |
+| 扩展照片清理策略 | `IPhotoStorage.cleanupOldPhotos` 已内置 FIFO（按最旧月份删除 + 阈值/安全线 + `isCleaning` 跨轮续删），可重写该默认实现定制策略 |
 | 云端上传 | 新增 `CloudPhotoStorage` 实现 `IPhotoStorage` |
 | 兼容更老设备 | 新增 `Camera1Controller` 实现 `ICameraController` |
 | 位置水印 | `WatermarkOptions` 增加 GPS 参数 |

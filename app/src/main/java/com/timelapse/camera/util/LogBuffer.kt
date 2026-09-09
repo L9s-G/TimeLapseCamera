@@ -110,7 +110,7 @@ object LogBuffer {
      * 没有 JVM 堆 buffer，进程被硬杀也丢不了——无需 flush 时机。
      */
     fun log(level: String, tag: String, message: String) {
-        val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+        val timeFormat = SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault())
         val line = "[${timeFormat.format(Date())}] $level/$tag: $message"
         val bytes = (line + "\n").toByteArray()
         synchronized(lock) {

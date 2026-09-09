@@ -113,16 +113,26 @@ IPhotoStorage.save() / saveTestPhoto()
 **拍摄循环（captureLoop）**：
 ```
 每轮：
-  1. 读取配置（CaptureConfig.load）
-  2. 检测存储位置变更 → 重建 storage 实例
-  3. FIFO 清理（存储空间不足时）
-  4. 远程配置拉取（如有 URL）
-  5. 拍摄（CameraXController.capture）
-  6. 水印处理（WatermarkPipeline.process）
-  7. 存盘（storage.save）
-  8. 更新通知倒计时
-  9. 设置备份闹钟（CaptureScheduler.scheduleNext）
-  10. delay(间隔) → 协程挂起
+  1. 读取用户配置（CaptureConfig.load）+ 运行时状态（RuntimeState.load）
+  2. 若 RuntimeState.isRunning=false → 用户已停止，退出循环
+  3. 检测存储位置变更 → 重建 storage 实例
+  4. FIFO 清理（见下方状态机）
+  5. 远程配置拉取（如有 URL）→ 成功后 RuntimeState.updateRemoteInterval
+  6. 拍摄（CameraXController.capture）
+  7. 水印处理（WatermarkPipeline.process）
+  8. 存盘（storage.save）→ 成功后 RuntimeState.updateCaptureProgress
+  9. 更新通知倒计时
+  10. 设置备份闹钟（CaptureScheduler.scheduleNext）
+  11. delay(间隔) → 协程挂起
+
+FIFO 清理状态机（0.5 段）：
+  shouldClean = RuntimeState.isCleaning || 剩余空间 < threshold
+  调用 storage.cleanupOldPhotos(safeLine, initialRemainingGb=剩余空间) → CleanupResult
+  nowCleaning = deleted>0 && result.remainingGb < safeLine
+  状态切换时（nowCleaning != isCleaning）：
+    - 打 FIFO开始/结束 日志（📀空间 | ◐阈值 | ⬤安全线 | 📷全目录照片数）
+    - RuntimeState.updateCleaning(nowCleaning)  ← 跨轮保持
+  防死循环：本轮 0 删除（无文件/权限不足）→ nowCleaning 必为 false，强制释放
 ```
 
 **线程模型**：
@@ -182,6 +192,20 @@ IPhotoStorage.save() / saveTestPhoto()
 
 **缓存策略**：`sortedCache`（`@Volatile`）缓存排序结果，写入/删除后失效，避免相册页每次分页都做 O(N log N) 全量扫描。
 
+**FIFO 清理（`IPhotoStorage.cleanupOldPhotos`，默认实现）**：
+
+按「最旧月份优先」删除照片，控制磁盘空间在用户阈值/安全线之内。
+
+- **管线模式**：调用方（`CaptureService`）传入 `initialRemainingGb`（入口值），方法返回 `CleanupResult(deleted, remainingGb, scannedCount)`。方法内部 StatFs **仅 1 次**（出口），入口用传入值判断，零系统调用——避免与调用方重复查剩余空间。
+- **批处理**：先收集候选文件（凑够 `maxDeleteCount` 即停），再批量删除，删除过程不穿插 StatFs。
+- **跨轮续删**：由 `CaptureService` 的 `isCleaning` 状态机驱动——一轮没删到安全线则下一轮继续，`isCleaning` 跨轮保持，防止「删一点把空间顶回阈值上方后、下轮被守卫吞掉」。
+- **防死循环**：本轮 0 删除（无文件 / 权限不足）→ `isCleaning` 强制复位，否则会无限循环。
+- **空文件夹不删（tradeoff）**：故意保留空的月份目录——① 不占存储空间，② 其他应用可能向同目录写文件，贸然 `folder.delete()` 有误删风险，③ 保留作为「该月曾拍过照」的记录。
+- **紧凑日志**（图标区分全量/本轮）：
+  - `FIFO未完成[📀X.XG | 📂N]`：本批未达标（📂=本轮扫描候选数）
+  - `删除失败[📀X.XG | 📂N]`：本批 0 删除（N=0 无文件 / N>0 权限不足）
+  - `FIFO开始/结束[📀 | ◐阈值 | ⬤安全线 | 📷全目录照片数]`：由调用方在 `isCleaning` 切换轮打印（📷=`getPhotoCount()` 全目录总数，低频）
+
 ### 2.6 LogBuffer（双进程日志系统）
 
 `util/LogBuffer.kt`
@@ -217,16 +241,29 @@ IPhotoStorage.save() / saveTestPhoto()
 
 ### 2.7 配置系统
 
-`config/CaptureConfig.kt`
+`config/CaptureConfig.kt` + `config/RuntimeState.kt`
 
-- 所有字段有默认值，首次运行不崩
-- `data class` + `copy()` 实现不可变配置
-- SharedPreferences 单例（`@Volatile` + `synchronized`）避免重复创建
-- 局部更新方法（`updateCaptureProgress`、`updateRemoteInterval`）避免竞态丢失更新
+**写入者隔离原则**：用户可编辑配置与运行时状态分离，杜绝全量 save 的丢失更新竞态。
 
-**三级回退**：
+| 类 | 职责 | 写入者 | 读取者 |
+|----|------|--------|--------|
+| `CaptureConfig` | 用户设置（11 个字段：间隔、摄像头、水印、存储位置/阈值/安全线等） | `SettingsFragment.save()` | 所有 |
+| `RuntimeState` | 运行时状态（5 个字段：`isRunning`、`isCleaning`、`captureCount`、`lastCaptureTime`、`lastRemoteInterval`） | Service / Watchdog 局部更新 | Service / Watchdog / UI 显示 |
+
+**设计理由**：`SettingsFragment` 持有 `CaptureConfig` 的快照，用户修改任意设置调 `save()` 全量写回——若 runtime 字段混在其中，`save()` 会把过期的 `isRunning`/`captureCount` 冲回去（丢失更新）。分离后 `CaptureConfig.save()` 不碰 runtime key，彻底消除竞态。
+
+**局部更新方法**（避免全量 save 竞态，每个方法只写 1 个 key）：
+
+| 方法 | 写入 key | 调用方 |
+|------|---------|--------|
+| `RuntimeState.updateRunning(ctx, isRunning)` | `is_running` | `StatusFragment` 开始/停止按钮 |
+| `RuntimeState.updateCleaning(ctx, isCleaning)` | `is_cleaning` | `CaptureService` FIFO 切换轮 |
+| `RuntimeState.updateCaptureProgress(ctx, count, time)` | `capture_count` + `last_capture_time` | `CaptureService` 每次拍摄后 |
+| `RuntimeState.updateRemoteInterval(ctx, interval)` | `last_remote_interval` | `CaptureService` 远程配置下发后 |
+
+**三级回退**（拍摄间隔）：
 ```
-远程值（URL 返回）→ 上次远程值（lastRemoteInterval）→ 本地默认值（intervalSeconds）
+远程值（URL 返回）→ 上次远程值（RuntimeState.lastRemoteInterval）→ 本地默认值（CaptureConfig.intervalSeconds）
 ```
 
 ---
@@ -312,7 +349,11 @@ val bitmap = withContext(Dispatchers.Main) {
 | 缓存 | 位置 | 失效条件 |
 |------|------|---------|
 | `sortedCache`（照片列表） | `LocalPhotoStorage` / `DcimPhotoStorage` | 写入或删除照片后 `invalidateListCache()` |
-| `prefsInstance`（SharedPreferences） | `CaptureConfig` 静态字段 | App 进程存活期间 |
+| `prefsInstance`（SharedPreferences） | `CaptureConfig` / `RuntimeState` 各自静态字段（指向同一文件） | App 进程存活期间 |
+
+> `CaptureConfig` 与 `RuntimeState` 各维护一份 `@Volatile prefsInstance`，但都通过
+> `getSharedPreferences("timelapse_config", ...)` 获取——Android 系统内部对该名称池化，
+> 两份引用最终指向同一 SharedPreferences 实例，字段 key 不重叠，线程安全。
 
 ### 5.3 Coil 图片加载
 
