@@ -23,7 +23,7 @@ android {
             def ksBase64 = System.getenv("KEYSTORE_BASE64")
             if (ksBase64) {
                 def keystoreFile = file("${project.rootDir}/release.keystore")
-                keystoreFile.write(ksBase64.decodeBase64())
+                keystoreFile.withOutputStream { it.write(ksBase64.decodeBase64()) }
                 storeFile = keystoreFile
                 storePassword = System.getenv("KEYSTORE_PASSWORD")
                 keyAlias = System.getenv("KEY_ALIAS")
