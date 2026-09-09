@@ -33,14 +33,33 @@ jobs:
     - name: Make gradlew executable
       run: chmod +x ./gradlew
 
-    - name: Build Debug APK
+    - name: Build Debug APK (auto on push)
+      if: github.event_name == 'push'
       run: ./gradlew assembleDebug --no-daemon --stacktrace
 
-    - name: Upload Artifact
+    - name: Upload Debug Artifact
+      if: github.event_name == 'push'
       uses: actions/upload-artifact@v6
       with:
         name: timelapse-camera-debug
         path: app/build/outputs/apk/debug/app-debug.apk
+        retention-days: 30
+
+    - name: Build Release APK (manual only)
+      if: github.event_name == 'workflow_dispatch'
+      run: ./gradlew assembleRelease --no-daemon --stacktrace
+      env:
+        KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
+    - name: Upload Release Artifact
+      if: github.event_name == 'workflow_dispatch'
+      uses: actions/upload-artifact@v6
+      with:
+        name: timelapse-camera-release
+        path: app/build/outputs/apk/release/app-release.apk
         retention-days: 30
 
   release:
@@ -49,14 +68,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Download APK Artifact
+    - name: Download Release APK Artifact
       uses: actions/download-artifact@v6
       with:
-        name: timelapse-camera-debug
+        name: timelapse-camera-release
         path: artifact
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v3
       with:
-        files: artifact/app-debug.apk
+        files: artifact/app-release.apk
         generate_release_notes: true
