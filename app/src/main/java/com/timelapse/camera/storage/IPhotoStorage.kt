@@ -60,79 +60,83 @@ interface IPhotoStorage {
     fun invalidateListCache() {}
 
     /**
-     * FIFO 清理旧照片：剩余空间低于阈值时，按时间从旧到新删除，直到达到安全线。
+     * FIFO 清理旧照片：按时间从旧到新删除，单轮最多删 maxDeleteCount 个。
+     *
+     * 管线模式：调用方传入 initialRemainingGb（入口防御），方法返回 CleanupResult（出口空间值）。
+     * 方法内部 StatFs 仅 1 次（出口），入口用传入值判断，零系统调用。
      *
      * 算法：
-     * 1. 检测剩余空间 >= 阈值 → 跳过
-     * 2. 列出月份文件夹（字典序 = 时间序，最旧在前）
-     * 3. 进入最旧文件夹，列出文件（字典序 = 时间序，最旧在前）
-     * 4. 逐个删除，每删一个检测是否达到安全线
-     * 5. 单轮最多删 maxDeleteCount 个，防止清理耗时过长影响拍摄节奏
-     * 6. 空文件夹自动删除
+     * 1. initialRemainingGb >= safeLine → 跳过（调用方已保证进入时 < safeLine，此层为参数合法性防御）
+     * 2. 从最旧月份目录开始收集候选文件，凑够 maxDeleteCount 即停收集
+     * 3. 批量删除（不穿插 StatFs）
+     * 4. 出口 1 次 StatFs，返回 CleanupResult
      *
-     * 默认实现基于 File API 删除文件，适用于 LocalPhotoStorage。
-     * 对于 DCIM 场景：App 对自己通过 MediaStore 写入的文件，
-     * 可以直接用 File API 删除（Android 11+ 允许 App 访问自己创建的文件）。
-     * 如果未来需要扩展支持清理系统相册中其他 App 写入的文件，才需要考虑 MediaStore 方案。
+     * 日志格式（紧凑）：
+     * - FIFO未完成[📀X.XG | 📂N]   本批未达标，下轮续删（N=本轮扫描候选数）
+     * - 删除失败[📀X.XG | 📂N]    本批 0 删除（N=0 无文件 / N>0 权限不足）
+     * - "FIFO开始 / FIFO结束"由调用方在 isCleaning 切换轮打印（用 📷=全目录总数）
      *
-     * @param thresholdGb 触发清理的剩余空间阈值（GB）
      * @param safeLineGb 清理目标安全线（GB）
-     * @param maxDeleteCount 单轮最多删除的文件数
-     * @return 实际删除的文件数
+     * @param maxDeleteCount 单轮最多删除的文件数（批大小）
+     * @param initialRemainingGb 调用方传入的当前可用空间（GB），用于入口防御，避免方法内多查一次 StatFs
+     * @return CleanupResult（deleted / remainingGb / scannedCount）
      */
     fun cleanupOldPhotos(
-        thresholdGb: Float,
         safeLineGb: Float,
-        maxDeleteCount: Int = 20
-    ): Int {
-        val photoDir = getPhotoDir()
-        var remaining = BatteryMonitor.getStorageRemainingGb(photoDir)
-        if (remaining >= thresholdGb) return 0
-
-        var deleted = 0
-        val monthFolders = photoDir.listFiles()?.filter { it.isDirectory }
-            ?.sortedBy { it.name } ?: run {
-            LogBuffer.log("W", "Storage", "无照片文件夹可清理")
-            return 0
+        maxDeleteCount: Int = 20,
+        initialRemainingGb: Float
+    ): CleanupResult {
+        if (initialRemainingGb >= safeLineGb) {
+            return CleanupResult(0, initialRemainingGb, 0)
         }
 
-        for (folder in monthFolders) {
-            if (deleted >= maxDeleteCount) break
-            remaining = BatteryMonitor.getStorageRemainingGb(photoDir)
-            if (remaining >= safeLineGb) break
+        val photoDir = getPhotoDir()
 
+        // ① 收集候选文件（从最旧月开始，凑够 maxDeleteCount 即停）
+        val monthFolders = photoDir.listFiles()?.filter { it.isDirectory }
+            ?.sortedBy { it.name } ?: return CleanupResult(0, initialRemainingGb, 0)
+
+        val allFiles = mutableListOf<File>()
+        var scannedCount = 0
+        for (folder in monthFolders) {
+            if (allFiles.size >= maxDeleteCount) break
             val files = folder.listFiles()
                 ?.filter { it.isFile && it.extension.equals("jpg", ignoreCase = true) }
                 ?.sortedBy { it.name } ?: continue
-
-            for (file in files) {
-                if (deleted >= maxDeleteCount) break
-                remaining = BatteryMonitor.getStorageRemainingGb(photoDir)
-                if (remaining >= safeLineGb) break
-
-                if (file.delete()) {
-                    deleted++
-                } else {
-                    LogBuffer.log("W", "Storage", "删除失败: ${file.name}")
-                }
-            }
-
-            if (folder.listFiles()?.isEmpty() == true) {
-                folder.delete()
-            }
+            scannedCount += files.size
+            allFiles += files
         }
 
+        // ② 批量删除（不穿插 StatFs）
+        var deleted = 0
+        for (file in allFiles.take(maxDeleteCount)) {
+            if (file.delete()) deleted++
+        }
+
+        // ③ 出口：唯一 1 次 StatFs + 日志
+        val finalRemaining = BatteryMonitor.getStorageRemainingGb(photoDir)
         if (deleted > 0) {
-            LogBuffer.log("I", "Storage", "FIFO 清理: 删除 $deleted 个文件, 剩余 ${BatteryMonitor.getStorageRemainingGb(photoDir)}GB")
-            if (BatteryMonitor.getStorageRemainingGb(photoDir) < safeLineGb && deleted >= maxDeleteCount) {
-                LogBuffer.log("W", "Storage", "本轮清理未完成，下轮继续")
-            }
-            // 删除了文件，通知实现失效列表缓存（相册页可能正在分页浏览）
             invalidateListCache()
+            if (finalRemaining < safeLineGb) {
+                LogBuffer.log("W", "Storage",
+                    "FIFO未完成[📀${String.format("%.1f", finalRemaining)}G | 📂$scannedCount]")
+            }
+        } else {
+            LogBuffer.log("W", "Storage",
+                "删除失败[📀${String.format("%.1f", finalRemaining)}G | 📂$scannedCount]")
         }
-        if (deleted == 0 && remaining < thresholdGb) {
-            LogBuffer.log("W", "Storage", "存储不足但无可删文件")
-        }
-        return deleted
+        return CleanupResult(deleted, finalRemaining, scannedCount)
     }
+
+    /**
+     * FIFO 清理结果。
+     * @param deleted 本批实际删除的文件数
+     * @param remainingGb 删除后的可用空间（GB），供调用方判定 isCleaning 切换
+     * @param scannedCount 本轮扫描到的候选文件数（仅统计实际 listFiles 过的目录）
+     */
+    data class CleanupResult(
+        val deleted: Int,
+        val remainingGb: Float,
+        val scannedCount: Int
+    )
 }

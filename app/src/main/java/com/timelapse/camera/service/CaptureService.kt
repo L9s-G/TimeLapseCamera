@@ -24,6 +24,7 @@ import com.timelapse.camera.model.CaptureResult
 import com.timelapse.camera.scheduler.CaptureScheduler
 import com.timelapse.camera.storage.IPhotoStorage
 import com.timelapse.camera.storage.PhotoStorageFactory
+import com.timelapse.camera.util.BatteryMonitor
 import com.timelapse.camera.util.LogBuffer
 import com.timelapse.camera.util.TimeUtils
 import com.timelapse.camera.util.WatermarkPipeline
@@ -178,11 +179,28 @@ class CaptureService : Service() {
                 // ── 0. 检测存储位置是否变更，变更则重建 storage 实例 ──
                 storage = PhotoStorageFactory.create(applicationContext, config)
 
-                // ── 0.5 FIFO 清理：拍摄前检测存储空间，不足则删旧照片 ──
-                storage.cleanupOldPhotos(
-                    thresholdGb = config.storageThresholdGb,
-                    safeLineGb = config.storageSafeLineGb
-                )
+                // ── 0.5 FIFO 清理：拍摄前检测存储空间 ──
+                // isCleaning 跨轮保持：防止 20 张/轮顶回阈值上方后，续删任务被静默吞掉。
+                // 进入条件：isCleaning=true（续删）或 空间 < threshold（首次触发）
+                val remaining = BatteryMonitor.getStorageRemainingGb(storage.getPhotoDir())
+                val shouldClean = config.isCleaning || remaining < config.storageThresholdGb
+                if (shouldClean) {
+                    val result = storage.cleanupOldPhotos(
+                        safeLineGb = config.storageSafeLineGb,
+                        initialRemainingGb = remaining
+                    )
+                    // 防死循环：本轮 0 删除（权限/无文件）→ 强制释放 isCleaning
+                    val nowCleaning = result.deleted > 0 && result.remainingGb < config.storageSafeLineGb
+                    if (nowCleaning != config.isCleaning) {
+                        if (nowCleaning)
+                            LogBuffer.log("I", "Storage",
+                                "FIFO开始[📀${String.format("%.1f", result.remainingGb)}G | ◐${config.storageThresholdGb} | ⬤${config.storageSafeLineGb} | 📷${storage.getPhotoCount()}]")
+                        else
+                            LogBuffer.log("I", "Storage",
+                                "FIFO结束[📀${String.format("%.1f", result.remainingGb)}G | ◐${config.storageThresholdGb} | ⬤${config.storageSafeLineGb} | 📷${storage.getPhotoCount()}]")
+                        CaptureConfig.updateCleaningState(applicationContext, nowCleaning)
+                    }
+                }
 
                 // ── 1. 远程配置：拉取下次拍摄间隔，写入 prefs 供服务重启/闹钟恢复使用 ──
                 if (!config.remoteConfigUrl.isNullOrBlank()) {

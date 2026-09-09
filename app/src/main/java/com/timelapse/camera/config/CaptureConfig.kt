@@ -64,7 +64,9 @@ data class CaptureConfig(
     /** FIFO 清理阈值（GB）：剩余空间低于此值时触发清理 */
     val storageThresholdGb: Float = 1.0f,
     /** FIFO 清理安全线（GB）：清理到此值停止 */
-    val storageSafeLineGb: Float = 2.0f
+    val storageSafeLineGb: Float = 2.0f,
+    /** FIFO 清理是否进行中（跨轮保持，防止阈值反弹后丢失续删任务） */
+    val isCleaning: Boolean = false
 ) {
     fun save(context: Context) {
         prefs(context).edit().apply {
@@ -83,6 +85,7 @@ data class CaptureConfig(
             putInt(KEY_SHOT_ROTATION, shotRotation)
             putFloat(KEY_STORAGE_THRESHOLD, storageThresholdGb)
             putFloat(KEY_STORAGE_SAFE_LINE, storageSafeLineGb)
+            putBoolean(KEY_IS_CLEANING, isCleaning)
             apply()
         }
     }
@@ -104,6 +107,7 @@ data class CaptureConfig(
         private const val KEY_SHOT_ROTATION = "shot_rotation"
         private const val KEY_STORAGE_THRESHOLD = "storage_threshold_gb"
         private const val KEY_STORAGE_SAFE_LINE = "storage_safe_line_gb"
+        private const val KEY_IS_CLEANING = "is_cleaning"
 
         @Volatile private var prefsInstance: SharedPreferences? = null
 
@@ -130,7 +134,8 @@ data class CaptureConfig(
                 storageLocation = StorageLocation.fromName(prefs.getString(KEY_STORAGE_LOCATION, null)),
                 shotRotation = prefs.getInt(KEY_SHOT_ROTATION, Surface.ROTATION_90),
                 storageThresholdGb = prefs.getFloat(KEY_STORAGE_THRESHOLD, 1.0f),
-                storageSafeLineGb = prefs.getFloat(KEY_STORAGE_SAFE_LINE, 2.0f)
+                storageSafeLineGb = prefs.getFloat(KEY_STORAGE_SAFE_LINE, 2.0f),
+                isCleaning = prefs.getBoolean(KEY_IS_CLEANING, false)
             )
         }
 
@@ -155,6 +160,16 @@ data class CaptureConfig(
         fun updateRemoteInterval(context: Context, remoteInterval: Int) {
             prefs(context).edit()
                 .putInt(KEY_LAST_REMOTE_INTERVAL, remoteInterval)
+                .apply()
+        }
+
+        /**
+         * 局部更新 FIFO 清理状态（避免全量 save 的丢失更新竞态）。
+         * 跨轮保持：防止阈值反弹后丢失续删任务。
+         */
+        fun updateCleaningState(context: Context, isCleaning: Boolean) {
+            prefs(context).edit()
+                .putBoolean(KEY_IS_CLEANING, isCleaning)
                 .apply()
         }
     }
