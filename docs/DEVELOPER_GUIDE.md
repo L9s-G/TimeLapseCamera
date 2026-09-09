@@ -30,32 +30,34 @@
 
 **设计理由**：国产 ROM（小米 MIUI、华为 EMUI 等）对后台进程管理激进，单一保活机制不可靠，三层叠加才能覆盖绝大多数场景。
 
-### 1.2 LogBuffer 自动初始化 + 三身份
+### 1.2 LogBuffer 双进程模型
 
 ```
 Application.onCreate()
-    └─ LogBuffer.initialize(appContext)    ← 唯一显式调用，Context 注入
+    └─ LogBuffer.initialize(appContext)    ← 唯一显式调用（幂等）
               │
               ▼
-组件首次 LogBuffer.log(identity, ...)
-    └─ LogBuffer 内部 autoInitIfNeeded：
-           ├─ 从 context.filesDir 派生日志文件 log_<identity>.txt
-           ├─ 加载该文件历史 MAX_SIZE 条到内存 buffer
-           ├─ 创建 State，文件路径绑定
-           └─ 再写当前日志（内存 + 文件 append）
+initialize() 一次性完成：
+    ├─ 探测当前进程 key（main / :watchdog）
+    ├─ 打开对应日志文件，从尾部 50KB 加载历史到内存 ring
+    └─ 打开常驻裸 append 流（FileOutputStream，不包 buffer）
               │
               ▼
-           后续 log() 直接走落盘路径，零时序风险
+后续所有组件直接 log(level, tag, msg)，无需传进程身份：
+    ├─ 写内存 ring（环形缓冲，本进程 UI 实时读）
+    └─ 写常驻 append 流（write() 直接把字节交内核 page cache）
 
-三身份文件（filesDir/）：
-  log_main.txt       主进程所有业务日志
+两个日志文件（filesDir/）：
+  log_main.txt       主进程所有业务日志（含 AlarmManager 闹钟事件）
   log_watchdog.txt   守护进程日志
-  log_scheduler.txt  AlarmManager 闹钟事件（两进程共用）
 ```
 
 **关键设计：**
-- 外部完全不需要调用任何 init()，所有组件"只管 log"
-- getFormattedLogs() 是纯读操作，不触发初始化（StatusFragment 是纯 Reader）
+- 一进程一写者文件，跨进程同文件竞争天然消失；进程 key 在 initialize() 探测一次并缓存，热路径只读缓存
+- 常驻裸 append 流无 JVM 堆 buffer：write() 直接交内核 page cache，进程被硬杀也丢不了，也就不存在"flush 时机"问题
+- 超过 500KB 触发截断到 200KB（close 旧流 → RandomAccessFile("rw") 读回保留窗口 + setLength → 重开 append 流）
+- 进程被杀由内核自动关闭 fd，无需显式 close；重启时 initialize() 重新打开
+- 跨进程读（UI 读 watchdog 日志）由 StatusFragment 直接用 RandomAccessFile 读文件尾部 50KB，不经 LogBuffer
 - 固定私有目录，不跟随照片存储路径，避免存储位置切换造成日志丢失
 
 ### 1.3 相机生命周期
@@ -180,28 +182,38 @@ IPhotoStorage.save() / saveTestPhoto()
 
 **缓存策略**：`sortedCache`（`@Volatile`）缓存排序结果，写入/删除后失效，避免相册页每次分页都做 O(N log N) 全量扫描。
 
-### 2.6 LogBuffer（工具类）
+### 2.6 LogBuffer（双进程日志系统）
 
 `util/LogBuffer.kt`
 
-内存环形缓冲 + 文件持久化，零显式 init。
+双进程模型下的日志系统：一个进程恰好一个写者文件，常驻裸 append 流写盘。
 
-**设计意图（解决了什么 bug）**：
-- 旧设计要求每个 Writer 在合适时机 init(dir, identity)，但双进程架构下 Watchdog 进程调用 CaptureScheduler 时它的日志身份（ID_SCHEDULER）没人显式 init，导致调度日志静默丢失
-- StatusFragment 作为纯读者也被要求 init，职责混乱
-- 新设计：LogBuffer.initialize(appContext) 在 Application.onCreate() 只做一次，后续所有组件只调 log()，首次调用自动完成身份初始化
+**历史背景（为什么从三身份改为双进程）**：
+- 旧设计有「三身份」（main / watchdog / scheduler），AlarmManager 闹钟事件单独写 `log_scheduler.txt`，由 main 和 :watchdog 两进程**共用同一文件** append
+- 问题：跨进程共用一个文件依赖「Linux 短行 append 原子性」这一隐含假设，且 scheduler 日志身份无人显式 init，容易静默丢日志
+- 新设计：取消共享文件，改为**双进程模型**——每个进程只写自己那个文件，scheduler（AlarmManager）日志并入 `log_main.txt`（调度器实际在主进程运行）。跨进程同文件竞争从此不存在
 
-**三个身份**：
+**两个日志文件**：
 
-| 常量 | 文件（filesDir/） | 归属进程 | 记录内容 |
+| 进程 key | 文件（filesDir/） | 归属进程 | 记录内容 |
 |------|-----------------|---------|---------|
-| ID_MAIN | log_main.txt | 主进程 | CaptureService/相机/存储/UI/水印 等 |
-| ID_WATCHDOG | log_watchdog.txt | :watchdog | 守护检测、重启闹钟、自行退出 |
-| ID_SCHEDULER | log_scheduler.txt | 两进程共用 | AlarmManager 闹钟事件（安排、取消、权限降级） |
+| PROC_MAIN | log_main.txt | 主进程 | CaptureService/相机/存储/UI/水印 + AlarmManager 闹钟事件 |
+| PROC_WATCHDOG | log_watchdog.txt | :watchdog | 守护检测、重启闹钟、自行退出 |
 
-**线程/进程隔离**：
-- 全局单例 object，但两进程各自一份 JVM 内存，完全独立
-- 两进程共用 ID_SCHEDULER 文件 —— 分别 append，Linux 下 append 模式对短行写入是原子的，不会交错
+**写路径（常驻裸流）**：
+- 一条常驻裸 `FileOutputStream`（不包 buffer），每条 log 只 `write()`，不 open/close
+- `write()` 直接把字节交给内核 page cache，没有 JVM 堆 buffer，进程被硬杀也丢不了，不存在"flush 时机"问题
+- 内存追踪 `fileSize` 仅作触发器，超过 500KB 时截断到 200KB（close 旧流 → `RandomAccessFile("rw")` 以实际文件长度定位保留窗口、读回+setLength → 重开 append 流），并借这次冷路径把触发器对回磁盘真实值
+
+**读路径**：
+- 本进程读：`getFormattedLogs()` 读内存 ring（无 IO），带脏标记缓存，稳态零分配零 GC
+- 跨进程读（StatusFragment 读 watchdog 日志）：调用方直接用 `RandomAccessFile` 读文件尾部 50KB，不经 LogBuffer
+
+**进程隔离**：
+- 全局 `object` 单例，但两进程各自一份 JVM 内存，完全独立
+- 一个进程恰好写一个文件，不再有跨进程写竞争
+
+**线程安全**：内存 ring + 文件操作共享全局 `lock`，多协程并发写不交错；`SimpleDateFormat` 每次局部创建实例使用。
 
 ### 2.7 配置系统
 
@@ -247,9 +259,10 @@ val bitmap = withContext(Dispatchers.Main) {
 
 ### 3.3 WakeLock 持有时机
 
-- **CaptureService**：`onStartCommand` 启动时 `acquireWakeLock()`，`onDestroy` 释放
-- **WatchdogService**：`onCreate` 时 `acquireWakeLock()`，`onDestroy` 释放
+- **CaptureService**：`onStartCommand` 启动时 `acquireWakeLock()`；优雅停止由 `onDestroy()` 释放，进程被杀时内核在进程回收时自动释放 held WakeLock
+- **WatchdogService**：`onCreate` 时 `acquireWakeLock()`；同理，优雅停止走 `onDestroy()`，进程被杀由内核自动回收
 - 全程无超时持有，而非"拍摄瞬间持有"——这是经过实测的教训
+- 不依赖任何应用层兜底：PARTIAL_WAKE_LOCK 是内核对象，进程被杀时随进程一起回收，不会残留
 
 ---
 

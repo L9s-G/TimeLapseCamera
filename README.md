@@ -1,6 +1,6 @@
 # 延时相机 (TimeLapseCamera)
 
-> **版本**：v1.0.1 | **最低 API**：26 (Android 8.0) | **目标 API**：34 (Android 14)
+> **版本**：v1.0.7 | **最低 API**：26 (Android 8.0) | **目标 API**：34 (Android 14)
 
 旧手机变身延时拍摄设备 —— 长期定期拍照，记录植物生长或城市发展。
 
@@ -15,7 +15,7 @@
 - **失败回退**：镜头自动切换 + 黑图占位 + 写入不崩溃 + 进程被杀恢复
 - **远程配置下发**：通过 URL 动态调整拍摄间隔（URL 格式校验 + 实际抓取验证）
 - **模块插拔设计**：相机、存储、配置均可独立替换，适合教学
-- **自动化日志体系（LogBuffer）**：双进程三身份，首次 log() 自动初始化，状态页三 Tab 切换查看，一键导出分享
+- **自动化日志体系（LogBuffer）**：双进程日志（main/watchdog），常驻裸 append 流无需 flush，状态页两 Tab 切换查看，SAF 目录一键导出
 
 ## UI 架构
 
@@ -34,7 +34,7 @@
 
 | Tab | 功能 | 典型使用场景 |
 |-----|------|-------------|
-| **状态** | 运行状态、拍摄统计、电量/存储/温度、开始/停止、三 Tab 日志 | 用户打开 App 第一眼，确认运行正常 |
+| **状态** | 运行状态、拍摄统计、电量/存储/温度、开始/停止、两 Tab 日志 | 用户打开 App 第一眼，确认运行正常 |
 | **预览** | 实时画面 + 「立即拍一张」试拍 | 安装时构图对齐，验证水印效果 |
 | **相册** | 网格浏览历史照片 | 回看记录，检查故障时段 |
 | **设置** | 拍摄参数、水印开关、权限状态、远程配置 | 调整参数，检查权限 |
@@ -55,21 +55,21 @@
 │  StatusFragment  PreviewFragment  GalleryFragment  │
 │  SettingsFragment                                  │
 │   │                                                │
-│   └─ StatusFragment: 纯读者，三 Tab 切换 + 一键导出  │
+│   └─ StatusFragment: 纯读者，两 Tab 切换 + SAF 目录导出  │
 └──────────────────┬─────────────────────────────────┘
                    │ startForegroundService(ACTION_START)
                    ▼
 ┌──────────────────────────────────────────────────┐
 │         CaptureService（主进程前台服务）             │
 │    通知栏显示倒计时 → 进程不被系统杀死               │
-│    ID_MAIN 日志 (log_main.txt)                     │
+│    PROC_MAIN 日志 (log_main.txt)                   │
 │  ┌────────────────────────────────────────────┐  │
 │  │            captureLoop (协程循环)             │  │
 │  │                                            │  │
 │  │  取配置 → 远程间隔 → 拍照 → 水印 → 存盘       │  │
 │  │     │                                    │  │
 │  │     ├── 更新倒计时通知（系统自动渲染）         │  │
-│  │     ├── scheduleNext() → ID_SCHEDULER 日志   │  │
+│  │     ├── scheduleNext() 设置备份闹钟          │  │
 │  │     └── delay(间隔) → WakeLock 全程持有      │  │
 │  └────────────────────────────────────────────┘  │
 │                                                  │
@@ -80,9 +80,9 @@
         ▼                                                ▼
 ┌──────────────────────────────────────────────────┐  AlarmManager
 │           WatchdogService（守护进程）               │   备份闹钟
-│  ID_WATCHDOG 日志 (log_watchdog.txt)              │◀── CaptureReceiver
+│  PROC_WATCHDOG 日志 (log_watchdog.txt)           │◀── CaptureReceiver
 │  每 60s 检查主服务存活；onDestroy 设 60s 闹钟交接   │
-│  scheduleNext() → ID_SCHEDULER 日志                │
+│  scheduleNext() 设置备份闹钟                       │
 └──────────────────────────────────────────────────┘
 
 三层保活:
@@ -93,13 +93,13 @@
   AlarmManager ──闹钟到期──▶ CaptureReceiver ──▶ startForegroundService
   开机自启    ──BOOT_COMPLETED──▶ BootReceiver ──▶ startForegroundService
 
-LogBuffer 三个身份文件（均位于 context.filesDir/，应用私有目录）：
-  ① ID_MAIN      → log_main.txt       主服务/相机/存储/UI
-  ② ID_WATCHDOG  → log_watchdog.txt   守护进程
-  ③ ID_SCHEDULER → log_scheduler.txt  AlarmManager 闹钟事件（两个进程共用）
+LogBuffer 两个日志文件（均位于 context.filesDir/，应用私有目录）：
+  ① PROC_MAIN     → log_main.txt       主服务/相机/存储/UI + AlarmManager 闹钟事件
+  ② PROC_WATCHDOG → log_watchdog.txt    守护进程
 
-首次调用 log(identity) 时自动完成：加载历史日志 → 创建文件 → 后续落盘，
-外部组件完全不需要调用 init()，不存在"未 init 先写"的时序问题。
+Application.onCreate() 中 initialize() 一次性完成：探测进程 key → 打开文件
+并加载尾部 50KB 历史 → 打开常驻 append 流；之后所有组件直接 log(level, tag, msg)，
+无需传进程身份，也无需显式 close（进程被杀由内核自动关 fd）。
 ```
 
 ## 目录结构
@@ -120,7 +120,7 @@ app/src/main/java/com/timelapse/camera/
 ├── MainActivity.kt              # 主界面：底部导航 + Fragment 切换
 │
 ├── ui/                          # ── UI 层（Fragment）──
-│   ├── status/StatusFragment.kt    #   状态页：运行状态 + 统计 + 三 Tab 日志 + 一键导出
+│   ├── status/StatusFragment.kt    #   状态页：运行状态 + 统计 + 两 Tab 日志 + SAF 导出
 │   ├── preview/PreviewFragment.kt  #   预览页：实时画面 + 试拍
 │   ├── gallery/GalleryFragment.kt  #   相册页：网格照片列表
 │   └── settings/SettingsFragment.kt #  设置页：参数 + 权限状态
@@ -147,7 +147,7 @@ app/src/main/java/com/timelapse/camera/
 │
 ├── util/                         # ── 工具类 ──
 │   ├── BatteryMonitor.kt         #   电量/存储/温度读取
-│   ├── LogBuffer.kt              #   日志：三身份（main/watchdog/scheduler）+ 自动初始化 + 一键导出
+│   ├── LogBuffer.kt              #   日志：双进程模型（main/watchdog）+ 常驻 append 流 + SAF 导出
 │   └── PermissionChecker.kt      #   权限检查 + 跳转系统设置
 │
 ├── scheduler/                    # ── 调度模块（备份）──
@@ -435,7 +435,7 @@ override fun onStartCommand(...) {
 }
 
 override fun onDestroy() {
-    releaseWakeLock()   // ← 只在服务销毁时释放
+    releaseWakeLock()   // ← 优雅停止时释放；进程被杀时内核自动回收
     ...
 }
 ```
@@ -743,19 +743,18 @@ TimeLapse/
 
 ### 日志文件位置（LogBuffer）
 
-为了避免与存储位置耦合、消除"未 init 先写"的时序 bug，日志文件固定保存在**应用私有目录** `context.filesDir/` 下，文件名与身份一一对应：
+为了避免与存储位置耦合、消除"未 init 先写"的时序 bug，日志文件固定保存在**应用私有目录** `context.filesDir/` 下，一个进程恰好写一个文件：
 
-| 身份 | 文件名 | 记录内容 |
+| 进程 | 文件名 | 记录内容 |
 |------|--------|---------|
-| ID_MAIN | `log_main.txt` | 主进程所有业务：CaptureService、相机、存储、水印、UI 等 |
-| ID_WATCHDOG | `log_watchdog.txt` | watchdog 独立进程的守护检测、重启决策、自我退出 |
-| ID_SCHEDULER | `log_scheduler.txt` | AlarmManager 闹钟事件：安排、取消、权限降级 |
+| PROC_MAIN | `log_main.txt` | 主进程所有业务：CaptureService、相机、存储、水印、UI、AlarmManager 闹钟事件等 |
+| PROC_WATCHDOG | `log_watchdog.txt` | watchdog 独立进程的守护检测、重启决策、自我退出 |
 
 > 日志不跟随照片存储路径的理由：照片可能放 SD 卡或 DCIM，日志的访问模式完全不同——需要保证稳定可写、私有、不被媒体扫描器打扰。直接放在 `filesDir` 是最简单可靠的。
 
-**初始化机制**：仅在 `TimeLapseApplication.onCreate()` 调一次 `LogBuffer.initialize(appContext)`。之后任何组件直接 `log(identity, level, tag, msg)` 即可，首条 log 会自动完成该身份的历史加载、文件创建和后续落盘，不存在"未初始化"问题。StatusFragment 作为纯读者，**完全不调用 init**，只在 UI 上做三 Tab 切换展示和导出。
+**初始化机制**：仅在 `TimeLapseApplication.onCreate()` 调一次 `LogBuffer.initialize(appContext)`，一次性完成：探测进程 key → 打开文件并加载尾部 50KB 历史 → 打开常驻 append 流。之后任何组件直接 `log(level, tag, msg)` 即可，无需传进程身份，也无需显式 close（进程被杀由内核自动关 fd）。StatusFragment 作为纯读者，**不管理 LogBuffer 生命周期**，只在 UI 上做两 Tab 切换展示和导出。
 
-**导出**：状态页日志卡片右上角「导出」按钮，点击后将当前 Tab 的日志文件复制到 `external_cache_dir/exports/` 下（带时间戳文件名），用 `FileProvider` 分享 Intent 发送给用户，可以存云盘或邮件发送。
+**导出**：状态页「导出」按钮通过 SAF 目录选择器（`OpenDocumentTree`）让用户选择保存位置，直接读 `filesDir/` 下的日志文件（绕开 LogBuffer）写入所选目录（带时间戳文件名），可以存云盘或转发分享。
 
 ## 扩展方向
 

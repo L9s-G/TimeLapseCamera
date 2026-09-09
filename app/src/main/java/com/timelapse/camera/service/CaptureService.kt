@@ -56,7 +56,8 @@ import kotlinx.coroutines.withContext
  * 原设计「间隔期深度睡眠节能、拍摄瞬间短暂唤醒」在部分实体设备（国产 OS）上
  * 被证伪：息屏后 CPU 完全无法可靠唤醒，闹钟链路也不可靠，拍摄时序彻底失控。
  * 现改为：运行期全程持有 PARTIAL_WAKE_LOCK（无超时），牺牲间隔期功耗
- * 换取拍摄时序的绝对可靠。锁随服务启动持有，onDestroy 无条件释放。
+ * 换取拍摄时序的绝对可靠。锁随服务启动持有；优雅停止由 onDestroy() 释放，
+ * 进程被杀时由内核自动回收，无需额外兜底。
  *
  * 教学要点：
  * - setChronometerCountDown(true) 让系统自动渲染倒计时，App 无需定时刷新通知
@@ -275,7 +276,8 @@ class CaptureService : Service() {
      * 为什么不用带超时的 acquire(timeout)？
      * - 早期版本用 acquire(59s)，实测国产 OS 息屏深度睡眠后 CPU 完全无法唤醒，
      *   拍摄间隔 >59s 时时序彻底失控
-     * - 无超时锁的释放责任完全在 onDestroy()，务必确保该路径可靠
+     * - 无超时锁：优雅停止时由 onDestroy() 释放；进程被杀时内核在进程回收
+     *   时自动释放所有 held WakeLock，无需依赖任何应用层兜底
      */
     private fun acquireWakeLock() {
         releaseWakeLock() // 先释放旧实例，防止闹钟重启路径覆盖引用导致旧锁泄漏

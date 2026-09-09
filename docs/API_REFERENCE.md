@@ -149,28 +149,31 @@ data class WatermarkOptions(
 
 `util/LogBuffer.kt`
 
-内存环形缓冲 + 文件持久化的日志工具。**自动初始化**：唯一显式调用是 Application.onCreate() 里的 `initialize(appContext)`，后续所有组件直接 `log()`，首次调用自动完成身份状态加载。
+双进程日志系统：内存环形缓冲 + 常驻裸 append 流写盘，**由 Application.onCreate() 调用 `initialize()` 显式一次性初始化**。
 
-### 身份常量
+### 进程 key 常量
 
 | 常量 | 文件（context.filesDir/） | 说明 |
 |------|--------------------------|------|
-| `ID_MAIN = "main"` | `log_main.txt` | 主进程所有业务日志 |
-| `ID_WATCHDOG = "watchdog"` | `log_watchdog.txt` | 守护进程日志 |
-| `ID_SCHEDULER = "scheduler"` | `log_scheduler.txt` | AlarmManager 闹钟事件（两进程共用） |
+| `PROC_MAIN = "main"` | `log_main.txt` | 主进程所有业务日志（含 AlarmManager 闹钟事件） |
+| `PROC_WATCHDOG = "watchdog"` | `log_watchdog.txt` | 守护进程日志 |
 
 ### 方法
 
 | 方法 | 说明 |
 |------|------|
-| `fun initialize(context: Context)` | 全局一次性初始化（Application.onCreate），幂等。之后才可使用全部功能 |
-| `fun log(identity: String, level: String, tag: String, message: String)` | 写入一条日志（同时写内存 + 文件 append）。首次调用自动完成该 identity 的历史加载与文件创建 |
-| `fun getFormattedLogs(identity: String): String` | 纯读取，返回最多 500 条按 `\n` 拼接的日志。未初始化身份返回空串（不触发 init） |
-| `fun exportLogs(identity: String): File?` | 将当前身份日志复制到 external cache（带时间戳），返回临时文件；未初始化或出错返回 null |
+| `fun initialize(context: Context)` | 全局一次性初始化（Application.onCreate() 调用），幂等。探测进程 key → 打开文件并从尾部 50KB 加载历史 → 打开常驻 append 流。之后才可使用全部功能 |
+| `fun log(level: String, tag: String, message: String)` | 写入一条日志（自动路由到本进程文件，无需传身份）。同时写内存 ring + 常驻裸 append 流 |
+| `fun getFormattedLogs(): String` | 纯读取本进程内存 ring（最多 500 条，按 `\n` 拼接）。带脏标记缓存，稳态零分配；不触发任何 IO |
 
-**线程安全**：全部公开方法用全局 `lock` 保护，多协程并发写入不交错。`SimpleDateFormat` 在每次调用时局部创建，规避线程安全问题。
+**没有 `exportLogs` 方法**：导出功能由 `StatusFragment` 通过 SAF 目录选择器（`OpenDocumentTree`）直接读 `filesDir/` 下的日志文件写入用户所选目录完成，绕开 LogBuffer。
 
-**进程隔离说明**：两进程各自独立维护一份状态，但 ID_SCHEDULER 用同一文件。Linux append 模式短行写是原子的，文件不会交错；UI 侧 getFormattedLogs() 只读取本进程内存 buffer，若需跨进程查看调度日志请用 `exportLogs()` 导出文件。
+**线程安全**：公开方法用全局 `lock` 保护，多协程并发写入不交错。`SimpleDateFormat` 每次调用时局部创建，规避线程安全问题。
+
+**进程隔离说明**：
+- 一进程一写者文件，跨进程同文件竞争天然消失（不再有共享 `log_scheduler.txt`）
+- 本进程读走内存 ring（无 IO）；跨进程读（如 UI 读 watchdog 日志）由调用方直接用 `RandomAccessFile` 读文件尾部 50KB，不经 LogBuffer
+- 常驻裸 `FileOutputStream` 无 JVM 堆 buffer，`write()` 直接交内核 page cache，进程被硬杀也不丢数据；进程被杀由内核自动关闭 fd，无需显式 close
 
 ---
 
