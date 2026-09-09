@@ -28,6 +28,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.RandomAccessFile
 import java.text.SimpleDateFormat
@@ -42,7 +43,7 @@ import java.util.Locale
  * - 开始/停止按钮
  * - 两 Tab 日志：
  *   - 主日志：读本进程 LogBuffer 内存 buffer（实时，3s 循环刷新，零磁盘 IO）
- *   - 守护日志：跨进程，RandomAccessFile 增量读 filesDir/log_watchdog.txt
+ *   - 守护日志：跨进程，RandomAccessFile 每次读 filesDir/log_watchdog.txt 尾部 50KB
  *     - 手动刷新：切 Tab / 重点击 Tab 时才 seek + read；不在前台时零系统调用
  *     - 文件不存在时显示"暂无日志"占位（便于发现 bug）
  * - 一键导出：SAF 目录选择器，直接读 filesDir 下两个日志文件写入用户指定目录（绕开 LogBuffer）
@@ -65,20 +66,17 @@ class StatusFragment : Fragment() {
     /** 当前选中的日志 Tab 对应的进程 key：主/守护。 */
     private var currentLogProcess = LogBuffer.PROC_MAIN
 
-    // ──── watchdog 跨进程日志：RAF 增量读 ────
+    // ──── watchdog 跨进程日志：RAF 只读尾部 50KB ────
 
     /**
      * watchdog 日志的只读文件流。
      * onViewCreated 时尝试 open（文件可能还不存在）；onDestroyView 时 close。
-     * 不在前台时保持 open 但零系统调用，只有切 tab 时 seek + read。
+     * 不在前台时保持 open 但零系统调用，只有切 tab 时 seek 到尾部 50KB + read。
      */
     private var watchdogRaf: RandomAccessFile? = null
 
-    /** 上次读到文件末尾的字节偏移；用于增量 seek。 */
-    private var watchdogLastPos: Long = 0L
-
-    /** watchdog 日志的 UI 显示 buffer（最多 LogBuffer.MAX_SIZE 条），独立于 LogBuffer。 */
-    private val watchdogLines = mutableListOf<String>()
+    /** 跨进程读侧的尾部窗口：50KB（与 LogBuffer.READ_WINDOW 对齐）。 */
+    private val watchdogReadWindow = 50 * 1024L
 
     /** 开始拍摄前必须持有相机权限（Android 14 camera type FGS 强制要求） */
     private val cameraPermissionLauncher = registerForActivityResult(
@@ -188,64 +186,50 @@ class StatusFragment : Fragment() {
         if (!file.exists()) return
         watchdogRaf?.close()
         watchdogRaf = runCatching { RandomAccessFile(file, "r") }.getOrNull()
-        watchdogLastPos = 0L
-        watchdogLines.clear()
     }
 
     /**
-     * 增量读取 watchdog 日志，追加到 UI 显示 buffer。
+     * 每次刷新 = 读文件最后 50KB，丢弃首行半截（跨了 50KB 边界），直接显示。
      *
-     * - RAF 为 null（文件尚未存在）：显示"暂无日志"占位
-     * - 文件被 LogBuffer 截断（watchdogLastPos > fileLength）：重置到文件头
-     * - 读到新内容：追加到 watchdogLines，截取最近 MAX_SIZE 条显示
-     * - 无新内容且 buffer 为空：显示"暂无日志"占位
+     * - RAF 为 null（文件尚未存在）：尝试 open；仍失败则显示"暂无日志"占位
+     * - 文件 < 50KB：从头读（整文件）
+     * - 文件被 LogBuffer 截断（500KB→200KB）：seek(max(0, fileLen-50KB)) 自然落在正确位置
+     *
+     * 比增量读更简单：没有偏移、没有追加 buffer、没有"文件被截短"的特殊处理。
      */
     private fun tryRefreshWatchdogLog() {
         val raf = watchdogRaf ?: run {
-            // RAF 尚未打开，尝试打开（文件可能刚被 watchdog 进程创建）
             openWatchdogRaf()
             val r = watchdogRaf
             if (r == null) {
                 binding.tvLog.text = getString(R.string.status_log_empty)
                 return
             }
-            refreshWatchdogFromRaf(r)
+            showLastWindow(r)
             return
         }
-        refreshWatchdogFromRaf(raf)
+        showLastWindow(raf)
     }
 
-    /** 从已打开的 RAF 增量读，更新 watchdogLines 和 tvLog。调用方必须确保 RAF 非 null。 */
-    private fun refreshWatchdogFromRaf(raf: RandomAccessFile) {
+    /** 读 RAF 最后 50KB，弃首行半截，更新 tvLog。 */
+    private fun showLastWindow(raf: RandomAccessFile) {
         val fileLen = raf.length()
-        if (watchdogLastPos > fileLen) {
-            // 文件被 LogBuffer 截断重写，旧偏移失效
-            watchdogLastPos = 0L
-            watchdogLines.clear()
+        if (fileLen == 0L) {
+            binding.tvLog.text = getString(R.string.status_log_empty)
+            return
         }
-        raf.seek(watchdogLastPos)
-        val sb = StringBuilder()
+        val start = if (fileLen > watchdogReadWindow) fileLen - watchdogReadWindow else 0L
+        raf.seek(start)
+        val baos = ByteArrayOutputStream()
         val buf = ByteArray(4096)
         while (true) {
             val n = raf.read(buf)
             if (n <= 0) break
-            sb.append(String(buf, 0, n, Charsets.UTF_8))
+            baos.write(buf, 0, n)
         }
-        watchdogLastPos = raf.filePointer
-
-        val newContent = sb.toString()
-        if (newContent.isNotEmpty()) {
-            val newLines = newContent.lineSequence().filter { it.isNotBlank() }.toList()
-            watchdogLines.addAll(newLines)
-            // 保持与 LogBuffer 相同的 MAX_SIZE 上限
-            while (watchdogLines.size > LogBuffer.MAX_SIZE) watchdogLines.removeAt(0)
-        }
-
-        binding.tvLog.text = if (watchdogLines.isEmpty()) {
-            getString(R.string.status_log_empty)
-        } else {
-            watchdogLines.joinToString("\n")
-        }
+        val content = baos.toString("UTF-8")
+        val text = if (start > 0) content.substringAfter('\n').trimStart('\n') else content
+        binding.tvLog.text = text.ifEmpty { getString(R.string.status_log_empty) }
     }
 
     // ──────────── config / storage 重载 ────────────
