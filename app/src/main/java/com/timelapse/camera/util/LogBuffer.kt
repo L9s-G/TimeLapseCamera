@@ -66,6 +66,10 @@ object LogBuffer {
 
     private val ring = ArrayDeque<String>(MAX_SIZE)
 
+    /** 缓存 getFormattedLogs() 的结果；ringDirty 为 false 时返回同一实例，零分配。 */
+    private var formattedCache = ""
+    private var ringDirty = true
+
     /** 常驻裸 append 流（不包 buffer），每条 write 直接交内核。 */
     @Volatile private var appendStream: FileOutputStream? = null
     @Volatile private var logFile: File? = null
@@ -113,15 +117,27 @@ object LogBuffer {
             // ring：O(1) addLast / removeFirst
             ring.addLast(line)
             while (ring.size > MAX_SIZE) ring.removeFirst()
+            ringDirty = true
 
             // 常驻 append 流写入
             writeToFileLocked(bytes)
         }
     }
 
-    /** 读取本进程内存日志（用于 UI 实时刷新，无 IO）。 */
+    /**
+     * 读取本进程内存日志（用于 UI 实时刷新，无 IO）。
+     *
+     * 脏标记缓存：ring 没变时返回 [formattedCache]（同一 String 实例），
+     * 稳态（3s 循环空转）零分配、零 GC 压力；[TextView.setText] 收到同一引用
+     * 走 identity 短路（String.equals O(1)），不 layout 不重绘。
+     * 只有 ring 真变了（有新日志）才重建一次。
+     */
     fun getFormattedLogs(): String = synchronized(lock) {
-        if (ring.isEmpty()) "" else ring.joinToString("\n")
+        if (ringDirty) {
+            formattedCache = if (ring.isEmpty()) "" else ring.joinToString("\n")
+            ringDirty = false
+        }
+        formattedCache
     }
 
     // ──────────── 进程探测 ────────────
