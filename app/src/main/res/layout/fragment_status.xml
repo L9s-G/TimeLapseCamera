@@ -9,13 +9,13 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="16dp">
+        android:padding="8dp">
 
         <!-- 状态 + 统计 -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp"
+            android:layout_marginBottom="8dp"
             app:cardCornerRadius="16dp"
             app:cardElevation="2dp">
 
@@ -23,13 +23,13 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="16dp">
+                android:padding="2dp">
 
                 <TextView
                     android:id="@+id/tvStatus"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginBottom="12dp"
+                    android:layout_marginBottom="4dp"
                     android:text="@string/status_stopped"
                     android:textSize="16sp"
                     android:textStyle="bold" />
@@ -43,6 +43,7 @@
                         android:id="@+id/tvCaptureCount"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
+                        android:layout_marginBottom="4dp"
                         android:text="@string/status_count_format"
                         android:textSize="13sp" />
 
@@ -50,7 +51,7 @@
                         android:id="@+id/tvBattery"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
+                        android:layout_marginBottom="4dp"
                         android:text="@string/status_battery_format"
                         android:textSize="13sp" />
 
@@ -58,7 +59,7 @@
                         android:id="@+id/tvStorage"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
+                        android:layout_marginBottom="4dp"
                         android:text="@string/status_storage_format"
                         android:textSize="13sp" />
 
@@ -66,7 +67,6 @@
                         android:id="@+id/tvTemperature"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
                         android:text="@string/status_temperature_format"
                         android:textSize="13sp" />
                 </LinearLayout>
@@ -78,7 +78,7 @@
             android:id="@+id/btnToggle"
             android:layout_width="match_parent"
             android:layout_height="56dp"
-            android:layout_marginBottom="12dp"
+            android:layout_marginBottom="8dp"
             android:text="@string/btn_start"
             android:textSize="16sp"
             app:cornerRadius="12dp" />
@@ -89,7 +89,7 @@
             style="?attr/materialButtonOutlinedStyle"
             android:layout_width="match_parent"
             android:layout_height="56dp"
-            android:layout_marginBottom="12dp"
+            android:layout_marginBottom="8dp"
             android:text="@string/btn_export_log"
             android:textSize="16sp"
             app:cornerRadius="12dp" />
@@ -98,7 +98,7 @@
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp"
+            android:layout_marginBottom="8dp"
             app:cardCornerRadius="16dp"
             app:cardElevation="2dp">
 
@@ -106,7 +106,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="16dp">
+                android:padding="2dp">
 
                 <com.google.android.material.tabs.TabLayout
                     android:id="@+id/tabLog"
@@ -120,7 +120,6 @@
                     android:id="@+id/svLog"
                     android:layout_width="match_parent"
                     android:layout_height="400dp"
-                    android:layout_marginTop="8dp"
                     android:nestedScrollingEnabled="true">
 
                     <TextView
